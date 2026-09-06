@@ -23,7 +23,10 @@ MODEL = "openai/gpt-oss-20b"
 
 client = Groq(api_key=GROQ_API_KEY)
 
-bot = telebot.TeleBot(TELEGRAM_TOKEN)
+bot = telebot.TeleBot(
+    TELEGRAM_TOKEN,
+    threaded=False
+)
 
 
 # =========================
