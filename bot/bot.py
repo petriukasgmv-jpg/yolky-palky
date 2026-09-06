@@ -1,11 +1,13 @@
 import os
+import traceback
+
 from flask import Flask, request
 from groq import Groq
 import telebot
 
 
 # =========================
-# НАСТРОЙКИ
+# SETTINGS
 # =========================
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -17,16 +19,14 @@ if not TELEGRAM_TOKEN:
 if not GROQ_API_KEY:
     raise RuntimeError("GROQ_API_KEY is not set")
 
-
 MODEL = "openai/gpt-oss-20b"
 
 client = Groq(api_key=GROQ_API_KEY)
-
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 
 
 # =========================
-# RENDER URL
+# RENDER / WEBHOOK
 # =========================
 
 RENDER_URL = os.getenv(
@@ -35,7 +35,6 @@ RENDER_URL = os.getenv(
 )
 
 WEBHOOK_PATH = "/telegram-webhook"
-
 WEBHOOK_URL = RENDER_URL.rstrip("/") + WEBHOOK_PATH
 
 
@@ -46,9 +45,12 @@ WEBHOOK_URL = RENDER_URL.rstrip("/") + WEBHOOK_PATH
 SYSTEM_PROMPT = """
 Ты — мой личный ИИ «Бизнес-Стратег» и Бизнес-Аудитор.
 
-Твоя главная задача — помогать мне создать реальные источники дохода и выйти минимум на €5 000 ЧИСТОЙ прибыли в месяц с минимальными первоначальными вложениями.
+Твоя главная задача — помогать мне создавать реальные источники дохода
+и выйти минимум на €5 000 ЧИСТОЙ прибыли в месяц
+с минимальными первоначальными вложениями.
 
 МОИ ИСХОДНЫЕ ДАННЫЕ:
+
 - Я умею работать сварщиком.
 - Я умею изготавливать мебель.
 - Я умею шить.
@@ -56,24 +58,28 @@ SYSTEM_PROMPT = """
 - Цель: €5 000 чистыми в месяц.
 
 ГЛАВНОЕ ПРАВИЛО:
+
 НЕ превращай разговор в анкету.
 
-Если каких-то данных не хватает, НЕ останавливай анализ и НЕ задавай длинный список вопросов.
-
-Сначала самостоятельно сделай максимально полезный анализ на основе имеющихся данных.
-Затем задай максимум 1–2 действительно важных вопроса, если без них невозможно уточнить расчёт.
+Если каких-то данных не хватает:
+- сначала самостоятельно сделай максимально полезный анализ;
+- используй разумные сценарии;
+- явно укажи допущения;
+- затем задай максимум 1–2 действительно важных вопроса.
 
 ЕСЛИ Я ГОВОРЮ «ВЫБЕРИ ЗА МЕНЯ»:
+
 Ты обязан самостоятельно:
+
 1. Найти 3 наиболее реалистичных варианта бизнеса.
 2. Сравнить их.
 3. Посчитать примерную экономику каждого.
-4. Определить необходимые продажи/заказы для достижения €5 000 чистыми в месяц.
+4. Определить необходимые продажи/заказы для €5 000 чистыми в месяц.
 5. Выбрать ОДИН лучший вариант лично для меня.
 6. Объяснить, почему именно его.
 7. Дать конкретный первый шаг, который я могу сделать сегодня.
 
-Не перекладывай выбор обратно на меня вопросом «что вы предпочитаете?».
+Не перекладывай выбор обратно на меня.
 
 ФОРМАТ АНАЛИЗА:
 
@@ -81,6 +87,7 @@ SYSTEM_PROMPT = """
 €5 000 чистыми в месяц.
 
 2. ТОП-3 ВАРИАНТА
+
 Для каждого:
 - что продаём;
 - кому продаём;
@@ -89,54 +96,70 @@ SYSTEM_PROMPT = """
 - себестоимость;
 - прибыль с одной продажи;
 - сколько продаж нужно в месяц;
-- насколько сложно получить первых клиентов;
+- сложность получения первых клиентов;
 - основные риски.
 
 3. СРАВНЕНИЕ
+
 Сделай простую таблицу или понятное сравнение.
 
 4. МОЙ ВЫБОР
+
 Напиши:
+
 «Я бы выбрал вариант №X».
 
 Обязательно объясни почему.
 
 5. ПЛАН ДО €5 000
+
 Покажи путь:
-€0 → первые €500 → €1 000 → €2 500 → €5 000.
+
+€0 → €500 → €1 000 → €2 500 → €5 000.
 
 6. ЧТО СДЕЛАТЬ СЕГОДНЯ
+
 Дай ОДНО конкретное действие, которое реально выполнить сегодня.
 
 ФИНАНСОВЫЕ ПРАВИЛА:
+
 - Все суммы показывай в евро.
 - Не выдумывай точные цены, спрос или прибыль.
-- Если точных данных нет, прямо обозначай: «оценка» или «нужно проверить».
-- Для актуальных цен, конкурентов, законодательства, спроса или других меняющихся данных используй интернет-поиск.
+- Если точных данных нет, обозначай это как «оценка».
+- Для актуальных цен, конкурентов, законодательства и спроса используй интернет-поиск.
 - Отделяй факты от предположений.
 - Не обещай гарантированную прибыль.
 - Считай чистую прибыль отдельно от выручки.
-- Учитывай материалы, рекламу, доставку, налоги и другие существенные расходы, если они применимы.
+- Учитывай материалы, рекламу, доставку, налоги и другие существенные расходы.
+- Не путай VAT/IVA с прибылью бизнеса.
+- Не путай выручку с чистой прибылью.
+- Учитывай стоимость моего труда, если это необходимо для реальной оценки бизнеса.
 
 СТИЛЬ:
+
 Говори прямо, как практический бизнес-партнёр.
+
 Не давай мотивационную воду.
+
 Не задавай пять вопросов подряд.
+
 Не говори «для начала мне нужно узнать...», если уже можно сделать предварительный анализ.
 
-Если информации недостаточно для точного расчёта — сначала сделай расчёт с разумными сценариями и явно укажи допущения.
+Если информации недостаточно для точного расчёта —
+сделай расчёт по разумным сценариям и явно укажи допущения.
 
 Главный принцип:
-Меньше разговоров — больше конкретных расчётов, решений и действий.
+
+Меньше разговоров — больше конкретных расчётов,
+решений и действий.
 """
 
 
 # =========================
-# ПАМЯТЬ
+# MEMORY
 # =========================
 
 user_histories = {}
-
 MAX_HISTORY = 20
 
 
@@ -147,35 +170,14 @@ MAX_HISTORY = 20
 app = Flask(__name__)
 
 
-# =========================
-# TELEGRAM WEBHOOK
-# =========================
+@app.route("/")
+def home():
+    return "Yolky Palky AI Business Strategist is running."
 
-@app.route(WEBHOOK_PATH, methods=["POST"])
-def telegram_webhook():
-    try:
-        raw_data = request.get_data().decode("utf-8")
 
-        print("=== TELEGRAM UPDATE RECEIVED ===")
-        print(raw_data)
-
-        update = telebot.types.Update.de_json(raw_data)
-
-        print("=== PROCESSING UPDATE ===")
-        bot.process_new_updates([update])
-
-        print("=== UPDATE PROCESSED OK ===")
-
-        return "OK", 200
-
-    except Exception as e:
-        import traceback
-
-        print("=== WEBHOOK ERROR ===")
-        print(repr(e))
-        traceback.print_exc()
-
-        return "ERROR", 500
+@app.route("/health")
+def health():
+    return "OK"
 
 
 # =========================
@@ -184,47 +186,34 @@ def telegram_webhook():
 
 @app.route(WEBHOOK_PATH, methods=["POST"])
 def telegram_webhook():
+    print("=== TELEGRAM WEBHOOK RECEIVED ===")
+
     try:
         raw_data = request.get_data().decode("utf-8")
 
-        print("=== TELEGRAM UPDATE RECEIVED ===")
+        print("=== UPDATE DATA RECEIVED ===")
         print(raw_data)
 
         update = telebot.types.Update.de_json(raw_data)
 
         print("=== PROCESSING UPDATE ===")
+
         bot.process_new_updates([update])
 
         print("=== UPDATE PROCESSED OK ===")
+
         return "OK", 200
 
     except Exception as e:
-        import traceback
-
         print("=== WEBHOOK ERROR ===")
         print(repr(e))
         traceback.print_exc()
 
         return "ERROR", 500
 
-    try:
-        update = telebot.types.Update.de_json(
-            request.get_data().decode("utf-8")
-        )
-
-        bot.process_new_updates([update])
-
-        return "OK", 200
-
-    except Exception as e:
-
-        print("WEBHOOK ERROR:", repr(e))
-
-        return "ERROR", 500
-
 
 # =========================
-# START
+# /START
 # =========================
 
 @bot.message_handler(commands=["start"])
@@ -238,7 +227,7 @@ def start(message):
         message.chat.id,
         "Привет! Я Ёлки-палки — твой ИИ-Бизнес-Стратег.\n\n"
         "Моя задача — помочь тебе двигаться к цели "
-        "5000 евро чистой прибыли в месяц.\n\n"
+        "€5 000 чистой прибыли в месяц.\n\n"
         "Я буду анализировать бизнес, считать расходы и прибыль, "
         "сравнивать варианты и искать актуальную информацию.\n\n"
         "Рассказывай, что хочешь сделать."
@@ -246,7 +235,7 @@ def start(message):
 
 
 # =========================
-# HELP
+# /HELP
 # =========================
 
 @bot.message_handler(commands=["help"])
@@ -259,14 +248,14 @@ def help_command(message):
         "• считать прибыль и расходы\n"
         "• сравнивать бизнес-модели\n"
         "• искать актуальные цены и конкурентов\n"
-        "• рассчитывать продажи для 5000 евро\n"
+        "• рассчитывать продажи для €5 000\n"
         "• помогать искать первых клиентов\n"
         "• составлять пошаговый план"
     )
 
 
 # =========================
-# СООБЩЕНИЯ
+# USER MESSAGES
 # =========================
 
 @bot.message_handler(func=lambda message: True)
@@ -277,6 +266,9 @@ def handle_message(message):
 
     if not user_text:
         return
+
+    print("=== USER MESSAGE ===")
+    print(user_text)
 
     if user_id not in user_histories:
         user_histories[user_id] = []
@@ -303,6 +295,8 @@ def handle_message(message):
 
     try:
 
+        print("=== SENDING REQUEST TO GROQ ===")
+
         completion = client.chat.completions.create(
             model=MODEL,
             messages=messages,
@@ -315,10 +309,15 @@ def handle_message(message):
             include_reasoning=False
         )
 
+        print("=== GROQ RESPONSE RECEIVED ===")
+
         answer = completion.choices[0].message.content
 
         if not answer:
             answer = "Не удалось получить ответ. Попробуй ещё раз."
+
+        print("=== ANSWER ===")
+        print(answer)
 
         history.append({
             "role": "assistant",
@@ -334,28 +333,32 @@ def handle_message(message):
                 answer[i:i + max_length]
             )
 
+        print("=== MESSAGE SENT TO TELEGRAM ===")
+
     except Exception as e:
 
-        print("AI ERROR:", repr(e))
+        print("=== AI ERROR ===")
+        print(repr(e))
+        traceback.print_exc()
 
         bot.send_message(
             message.chat.id,
-            "Произошла ошибка при обработке запроса. "
-            "Попробуй отправить сообщение ещё раз."
+            "Произошла ошибка при обработке запроса.\n\n"
+            "Я уже записал техническую ошибку в Render."
         )
 
 
 # =========================
-# ЗАПУСК
+# START SERVER
 # =========================
 
 if __name__ == "__main__":
 
+    print("===================================")
     print("Starting Yolky Palky webhook bot...")
     print("Webhook URL:", WEBHOOK_URL)
+    print("===================================")
 
-    # Устанавливаем webhook.
-    # ВАЖНО: здесь больше НЕТ infinity_polling().
     try:
 
         result = bot.set_webhook(
@@ -367,8 +370,11 @@ if __name__ == "__main__":
     except Exception as e:
 
         print("Webhook setup error:", repr(e))
+        traceback.print_exc()
 
-    port = int(os.getenv("PORT", "10000"))
+    port = int(
+        os.getenv("PORT", "10000")
+    )
 
     app.run(
         host="0.0.0.0",
