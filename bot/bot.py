@@ -4,7 +4,7 @@ import threading
 from flask import Flask
 from groq import Groq
 import telebot
-from duckduckgo_search import DDGS
+from ddgs import DDGS
 
 # === Переменные окружения ===
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
