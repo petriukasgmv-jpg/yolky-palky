@@ -1,3 +1,4 @@
+
 import os
 import telebot
 from groq import Groq
@@ -15,7 +16,7 @@ app = Flask(__name__)
 def handle_message(message):
     try:
         completion = client.chat.completions.create(
-            model="mixtral-8x7b-32768",
+            model="llama3-70b-8192",  # ← ИЗМЕНИЛ!
             messages=[{"role": "user", "content": message.text}],
         )
         bot.reply_to(message, completion.choices[0].message.content)
