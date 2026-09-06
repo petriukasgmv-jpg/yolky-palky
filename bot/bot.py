@@ -15,7 +15,7 @@ app = Flask(__name__)
 def handle_message(message):
     try:
         completion = client.chat.completions.create(
-            model="llama-3.3-70b-versatile"
+            model="llama-3.3-70b-versatile",
             messages=[{"role": "user", "content": message.text}]
         )
         bot.reply_to(message, completion.choices[0].message.content)
