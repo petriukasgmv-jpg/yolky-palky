@@ -192,9 +192,57 @@ def health():
 # =========================
 # TELEGRAM WEBHOOK
 # =========================
-
 @app.route(WEBHOOK_PATH, methods=["POST"])
 def telegram_webhook():
+
+    print("=== WEBHOOK HIT ===", flush=True)
+
+    try:
+        raw_data = request.get_data().decode("utf-8")
+
+        print("=== TELEGRAM DATA ===", flush=True)
+        print(raw_data, flush=True)
+
+        update = telebot.types.Update.de_json(raw_data)
+
+        print("=== UPDATE CREATED ===", flush=True)
+
+        # Диагностический прямой тест /start
+        if update.message and update.message.text == "/start":
+
+            print("=== DIRECT START HANDLER ===", flush=True)
+
+            user_id = update.message.from_user.id
+            user_histories[user_id] = []
+
+            bot.send_message(
+                update.message.chat.id,
+                "Привет! Я Ёлки-палки — твой ИИ-Бизнес-Стратег.\n\n"
+                "Моя задача — помочь тебе выйти на "
+                "€5 000 чистой прибыли в месяц.\n\n"
+                "Напиши мне любую бизнес-идею."
+            )
+
+            print("=== DIRECT START SENT ===", flush=True)
+
+            return "OK", 200
+
+        # Все остальные сообщения передаём обычным обработчикам
+        bot.process_new_updates([update])
+
+        print("=== UPDATE PROCESSED ===", flush=True)
+
+        return "OK", 200
+
+    except Exception as e:
+
+        print("=== WEBHOOK ERROR ===", flush=True)
+        print(repr(e), flush=True)
+
+        traceback.print_exc()
+
+        return "ERROR", 500
+
 
     print("=== WEBHOOK HIT ===", flush=True)
 
