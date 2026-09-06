@@ -1,8 +1,10 @@
 import os
+import threading
+from flask import Flask
 from groq import Groq
 import telebot
 
-# Получаем токены из переменных окружения Render
+# Получаем токены из переменных окружения
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
@@ -12,8 +14,9 @@ if not TELEGRAM_TOKEN or not GROQ_API_KEY:
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 groq_client = Groq(api_key=GROQ_API_KEY)
 
-# Ипользуем актуальную модель Groq
-MODEL_NAME = "llama-3.3-70b-specdec"  # Можно заменить на "llama-3.1-8b-instant" для высокой скорости
+# Актуальная рабочая модель (старые llama-3.3 и llama-3.1 больше не работают)
+MODEL_NAME = "openai/gpt-oss-20b"   # быстрая и дешёвая
+# MODEL_NAME = "openai/gpt-oss-120b"  # более умная (можно попробовать потом)
 
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
@@ -22,7 +25,6 @@ def send_welcome(message):
 @bot.message_handler(func=lambda message: True)
 def handle_message(message):
     try:
-        # Отправляем запрос в Groq API
         chat_completion = groq_client.chat.completions.create(
             messages=[
                 {
@@ -32,8 +34,6 @@ def handle_message(message):
             ],
             model=MODEL_NAME,
         )
-        
-        # Получаем ответ
         response_text = chat_completion.choices[0].message.content
         bot.reply_to(message, response_text)
 
@@ -41,7 +41,30 @@ def handle_message(message):
         error_msg = f"❌ Ошибка при обращении к Groq:\n{str(e)}"
         bot.reply_to(message, error_msg)
 
+
+# === Заглушка порта для Render Web Service ===
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Bot is running!"
+
+def run_flask():
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
+
+# =============================================
+
 if __name__ == "__main__":
-    # Запуск бота в режиме Polling (для постоянной работы на Render Web Service / Background Worker)
+    # Удаляем возможный старый webhook (на всякий случай)
+    try:
+        bot.delete_webhook()
+        print("Webhook удалён")
+    except Exception as e:
+        print(f"Не удалось удалить webhook: {e}")
+
+    # Запускаем Flask в фоне, чтобы Render видел открытый порт
+    threading.Thread(target=run_flask, daemon=True).start()
+
     print("Бот успешно запущен...")
     bot.infinity_polling(skip_pending=True)
