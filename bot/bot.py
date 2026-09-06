@@ -186,7 +186,32 @@ def health():
 
 @app.route(WEBHOOK_PATH, methods=["POST"])
 def telegram_webhook():
-    print("=== TELEGRAM WEBHOOK RECEIVED ===")
+    print("=== @app.route(WEBHOOK_PATH, methods=["POST"])
+def telegram_webhook():
+    print("=== WEBHOOK HIT ===", flush=True)
+
+    try:
+        raw_data = request.get_data().decode("utf-8")
+
+        print("=== TELEGRAM DATA ===", flush=True)
+        print(raw_data, flush=True)
+
+        update = telebot.types.Update.de_json(raw_data)
+
+        print("=== UPDATE CREATED ===", flush=True)
+
+        bot.process_new_updates([update])
+
+        print("=== UPDATE PROCESSED ===", flush=True)
+
+        return "OK", 200
+
+    except Exception as e:
+        print("=== WEBHOOK ERROR ===", flush=True)
+        print(repr(e), flush=True)
+        traceback.print_exc()
+
+        return "ERROR", 500 ===")
 
     try:
         raw_data = request.get_data().decode("utf-8")
