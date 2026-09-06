@@ -6,6 +6,9 @@ from flask import Flask, request
 
 TOKEN = os.getenv("TELEBOT_BOT_TOKEN")
 GROQ_KEY = os.getenv("GROQ_API_KEY")
+if not TOKEN or not GROQ_KEY:
+    exit("Ошибка: Переменные окружения TELEBOT_BOT_TOKEN и GROQ_API_KEY должны быть заданы.")
+
 
 bot = telebot.TeleBot(TOKEN)
 client = Groq(api_key=GROQ_KEY)
