@@ -1,9 +1,9 @@
 services:
   - type: web
-    name: yolky-palky-bot
+    name: yolky-palky-bot-1
     runtime: python3
     buildCommand: "pip install -r bot/requirements.txt"
-    startCommand: "python bot/bot.py"
+    startCommand: "python bot/polling_bot.py"
     envVars:
       - key: TELEGRAM_BOT_TOKEN
         sync: false
