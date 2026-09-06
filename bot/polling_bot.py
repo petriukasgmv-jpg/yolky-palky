@@ -19,5 +19,5 @@ def handle_message(message):
     except Exception as e:
         bot.reply_to(message, f"❌ Ошибка: {e}")
 
-print("🚀 Бот запущен!")
+print("🚀 Бот работает!")
 bot.polling(none_stop=True)
