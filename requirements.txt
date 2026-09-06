@@ -1,4 +1,4 @@
 pyTelegramBotAPI
 groq
-python-dotenv
+from duckduckgo_search import DDGS
 duckduckgo-search
