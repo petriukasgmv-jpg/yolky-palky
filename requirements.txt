@@ -2,4 +2,4 @@ pyTelegramBotAPI
 groq
 python-dotenv
 flask
-duckduckgo-search
+ddgs
