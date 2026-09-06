@@ -147,14 +147,35 @@ MAX_HISTORY = 20
 app = Flask(__name__)
 
 
-@app.route("/")
-def home():
-    return "Yolky Palky AI Business Strategist is running."
+# =========================
+# TELEGRAM WEBHOOK
+# =========================
 
+@app.route(WEBHOOK_PATH, methods=["POST"])
+def telegram_webhook():
+    try:
+        raw_data = request.get_data().decode("utf-8")
 
-@app.route("/health")
-def health():
-    return "OK"
+        print("=== TELEGRAM UPDATE RECEIVED ===")
+        print(raw_data)
+
+        update = telebot.types.Update.de_json(raw_data)
+
+        print("=== PROCESSING UPDATE ===")
+        bot.process_new_updates([update])
+
+        print("=== UPDATE PROCESSED OK ===")
+
+        return "OK", 200
+
+    except Exception as e:
+        import traceback
+
+        print("=== WEBHOOK ERROR ===")
+        print(repr(e))
+        traceback.print_exc()
+
+        return "ERROR", 500
 
 
 # =========================
