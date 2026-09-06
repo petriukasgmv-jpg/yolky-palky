@@ -26,9 +26,9 @@ def webhook():
         chat_id = update.message.chat.id
         
         try:
-            # Запрос к Groq
+            # Запрос к Groq (используем доступную модель)
             completion = client.chat.completions.create(
-                model=model="llama-3.1-8b-instant",
+                model="llama-3.1-8b-instant",
                 messages=[{"role": "user", "content": user_text}]
             )
             reply_text = completion.choices[0].message.content
