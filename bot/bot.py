@@ -22,11 +22,12 @@ if not GROQ_API_KEY:
 MODEL = "openai/gpt-oss-20b"
 
 client = Groq(api_key=GROQ_API_KEY)
+
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 
 
 # =========================
-# RENDER / WEBHOOK
+# WEBHOOK
 # =========================
 
 RENDER_URL = os.getenv(
@@ -35,7 +36,11 @@ RENDER_URL = os.getenv(
 )
 
 WEBHOOK_PATH = "/telegram-webhook"
-WEBHOOK_URL = RENDER_URL.rstrip("/") + WEBHOOK_PATH
+
+WEBHOOK_URL = (
+    RENDER_URL.rstrip("/")
+    + WEBHOOK_PATH
+)
 
 
 # =========================
@@ -160,6 +165,7 @@ SYSTEM_PROMPT = """
 # =========================
 
 user_histories = {}
+
 MAX_HISTORY = 20
 
 
@@ -186,11 +192,11 @@ def health():
 
 @app.route(WEBHOOK_PATH, methods=["POST"])
 def telegram_webhook():
-    print("=== @app.route(WEBHOOK_PATH, methods=["POST"])
-def telegram_webhook():
+
     print("=== WEBHOOK HIT ===", flush=True)
 
     try:
+
         raw_data = request.get_data().decode("utf-8")
 
         print("=== TELEGRAM DATA ===", flush=True)
@@ -207,38 +213,17 @@ def telegram_webhook():
         return "OK", 200
 
     except Exception as e:
+
         print("=== WEBHOOK ERROR ===", flush=True)
         print(repr(e), flush=True)
-        traceback.print_exc()
 
-        return "ERROR", 500 ===")
-
-    try:
-        raw_data = request.get_data().decode("utf-8")
-
-        print("=== UPDATE DATA RECEIVED ===")
-        print(raw_data)
-
-        update = telebot.types.Update.de_json(raw_data)
-
-        print("=== PROCESSING UPDATE ===")
-
-        bot.process_new_updates([update])
-
-        print("=== UPDATE PROCESSED OK ===")
-
-        return "OK", 200
-
-    except Exception as e:
-        print("=== WEBHOOK ERROR ===")
-        print(repr(e))
         traceback.print_exc()
 
         return "ERROR", 500
 
 
 # =========================
-# /START
+# START
 # =========================
 
 @bot.message_handler(commands=["start"])
@@ -260,7 +245,7 @@ def start(message):
 
 
 # =========================
-# /HELP
+# HELP
 # =========================
 
 @bot.message_handler(commands=["help"])
@@ -287,26 +272,31 @@ def help_command(message):
 def handle_message(message):
 
     user_id = message.from_user.id
+
     user_text = message.text
 
     if not user_text:
         return
 
-    print("=== USER MESSAGE ===")
-    print(user_text)
+    print("=== USER MESSAGE ===", flush=True)
+    print(user_text, flush=True)
 
     if user_id not in user_histories:
         user_histories[user_id] = []
 
     history = user_histories[user_id]
 
-    history.append({
-        "role": "user",
-        "content": user_text
-    })
+    history.append(
+        {
+            "role": "user",
+            "content": user_text
+        }
+    )
 
     if len(history) > MAX_HISTORY:
+
         history = history[-MAX_HISTORY:]
+
         user_histories[user_id] = history
 
     messages = [
@@ -320,7 +310,10 @@ def handle_message(message):
 
     try:
 
-        print("=== SENDING REQUEST TO GROQ ===")
+        print(
+            "=== SENDING REQUEST TO GROQ ===",
+            flush=True
+        )
 
         completion = client.chat.completions.create(
             model=MODEL,
@@ -334,42 +327,60 @@ def handle_message(message):
             include_reasoning=False
         )
 
-        print("=== GROQ RESPONSE RECEIVED ===")
+        print(
+            "=== GROQ RESPONSE RECEIVED ===",
+            flush=True
+        )
 
         answer = completion.choices[0].message.content
 
         if not answer:
-            answer = "Не удалось получить ответ. Попробуй ещё раз."
 
-        print("=== ANSWER ===")
-        print(answer)
+            answer = (
+                "Не удалось получить ответ. "
+                "Попробуй ещё раз."
+            )
 
-        history.append({
-            "role": "assistant",
-            "content": answer
-        })
+        print("=== ANSWER ===", flush=True)
+        print(answer, flush=True)
+
+        history.append(
+            {
+                "role": "assistant",
+                "content": answer
+            }
+        )
 
         max_length = 4000
 
-        for i in range(0, len(answer), max_length):
+        for i in range(
+            0,
+            len(answer),
+            max_length
+        ):
 
             bot.send_message(
                 message.chat.id,
                 answer[i:i + max_length]
             )
 
-        print("=== MESSAGE SENT TO TELEGRAM ===")
+        print(
+            "=== MESSAGE SENT TO TELEGRAM ===",
+            flush=True
+        )
 
     except Exception as e:
 
-        print("=== AI ERROR ===")
-        print(repr(e))
+        print("=== AI ERROR ===", flush=True)
+
+        print(repr(e), flush=True)
+
         traceback.print_exc()
 
         bot.send_message(
             message.chat.id,
             "Произошла ошибка при обработке запроса.\n\n"
-            "Я уже записал техническую ошибку в Render."
+            "Техническая ошибка записана в Render Logs."
         )
 
 
@@ -379,10 +390,26 @@ def handle_message(message):
 
 if __name__ == "__main__":
 
-    print("===================================")
-    print("Starting Yolky Palky webhook bot...")
-    print("Webhook URL:", WEBHOOK_URL)
-    print("===================================")
+    print(
+        "===================================",
+        flush=True
+    )
+
+    print(
+        "Starting Yolky Palky webhook bot...",
+        flush=True
+    )
+
+    print(
+        "Webhook URL:",
+        WEBHOOK_URL,
+        flush=True
+    )
+
+    print(
+        "===================================",
+        flush=True
+    )
 
     try:
 
@@ -390,15 +417,27 @@ if __name__ == "__main__":
             url=WEBHOOK_URL
         )
 
-        print("Webhook set:", result)
+        print(
+            "Webhook set:",
+            result,
+            flush=True
+        )
 
     except Exception as e:
 
-        print("Webhook setup error:", repr(e))
+        print(
+            "Webhook setup error:",
+            repr(e),
+            flush=True
+        )
+
         traceback.print_exc()
 
     port = int(
-        os.getenv("PORT", "10000")
+        os.getenv(
+            "PORT",
+            "10000"
+        )
     )
 
     app.run(
