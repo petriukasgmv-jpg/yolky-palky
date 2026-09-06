@@ -13,7 +13,7 @@ bot = telebot.TeleBot(TELEGRAM_TOKEN)
 groq_client = Groq(api_key=GROQ_API_KEY)
 
 # Ипользуем актуальную модель Groq
-MODEL_NAME = "llama-3.3-70b-versatile"  # Можно заменить на "llama-3.1-8b-instant" для высокой скорости
+MODEL_NAME = "llama-3.3-70b-specdec"  # Можно заменить на "llama-3.1-8b-instant" для высокой скорости
 
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
