@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: yolky-palky-bot
+    runtime: python311
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "python bot/main.py"
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        scope: run
+        value: ${TELEGRAM_BOT_TOKEN}
+      - key: GROQ_API_KEY
+        scope: run
+        value: ${GROQ_API_KEY}
