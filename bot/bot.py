@@ -1,52 +1,47 @@
 import os
-import telebot
 from groq import Groq
-from flask import Flask, request
+import telebot
 
-# --- НАСТРОЙКИ ---
-TOKEN = os.getenv("TELEBOT_BOT_TOKEN")
-GROQ_KEY = os.getenv("GROQ_API_KEY")
+# Получаем токены из переменных окружения Render
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
-if not TOKEN or not GROQ_KEY:
-    exit("Ошибка: Переменные окружения TELEBOT_BOT_TOKEN и GROQ_API_KEY не заданы!")
+if not TELEGRAM_TOKEN or not GROQ_API_KEY:
+    raise ValueError("Необходимо задать TELEGRAM_TOKEN и GROQ_API_KEY в переменной окружения!")
 
-bot = telebot.TeleBot(TOKEN)
-client = Groq(api_key=GROQ_KEY)
-app = Flask(__name__)
+bot = telebot.TeleBot(TELEGRAM_TOKEN)
+groq_client = Groq(api_key=GROQ_API_KEY)
 
-# --- МАРШРУТ ДЛЯ TELEGRAM (WEBHOOK) ---
-@app.route('/webhook', methods=['POST'])
-def webhook():
-    json_string = request.get_data().decode('utf-8')
-    update = telebot.types.Update.de_json(json_string)
-    
-    # Проверяем, есть ли в апдейте текст сообщения
-    if update.message and update.message.text:
-        user_text = update.message.text
-        chat_id = update.message.chat.id
+# Ипользуем актуальную модель Groq
+MODEL_NAME = "llama-3.3-70b-versatile"  # Можно заменить на "llama-3.1-8b-instant" для высокой скорости
+
+@bot.message_handler(commands=['start', 'help'])
+def send_welcome(message):
+    bot.reply_to(message, "Привет! Я ИИ-ассистент на базе Groq. Напиши мне что-нибудь!")
+
+@bot.message_handler(func=lambda message: True)
+def handle_message(message):
+    try:
+        # Отправляем запрос в Groq API
+        chat_completion = groq_client.chat.completions.create(
+            messages=[
+                {
+                    "role": "user",
+                    "content": message.text,
+                }
+            ],
+            model=MODEL_NAME,
+        )
         
-        try:
-            # Запрос к Groq (используем доступную модель)
-            completion = client.chat.completions.create(
-                model="llama-3.1-8b-instant",
-                messages=[{"role": "user", "content": user_text}]
-            )
-            reply_text = completion.choices[0].message.content
-        except Exception as e:
-            reply_text = f"❌ Ошибка при обращении к Groq: {e}"
-        
-        # Отправляем ответ через telebot
-        bot.send_message(chat_id, reply_text)
-    
-    return '', 200
+        # Получаем ответ
+        response_text = chat_completion.choices[0].message.content
+        bot.reply_to(message, response_text)
 
-# --- ГЛАВНАЯ СТРАНИЦА (ДЛЯ ПРОВЕРКИ) ---
-@app.route('/')
-def index():
-    return 'Bot is running!', 200
+    except Exception as e:
+        error_msg = f"❌ Ошибка при обращении к Groq:\n{str(e)}"
+        bot.reply_to(message, error_msg)
 
-# --- ЗАПУСК СЕРВЕРА (ОБЯЗАТЕЛЬНО В САМОМ КОНЦЕ) ---
-if __name__ == '__main__':
-    # Render передает порт через переменную окружения PORT
-    port = int(os.environ.get('PORT', 10000))
-    app.run(host='0.0.0.0', port=port)
+if __name__ == "__main__":
+    # Запуск бота в режиме Polling (для постоянной работы на Render Web Service / Background Worker)
+    print("Бот успешно запущен...")
+    bot.infinity_polling(skip_pending=True)
