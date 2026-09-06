@@ -1,7 +1,7 @@
 import os
 import telebot
 from groq import Groq
-from ddgs import DDGS
+from duckduckgo_search import DDGS
 
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GROQ_KEY = os.getenv("GROQ_API_KEY")
@@ -9,7 +9,6 @@ GROQ_KEY = os.getenv("GROQ_API_KEY")
 bot = telebot.TeleBot(TOKEN)
 client = Groq(api_key=GROQ_KEY)
 
-# Функция поиска в интернете
 def search_web(query):
     try:
         with DDGS() as ddgs:
@@ -24,13 +23,10 @@ def search_web(query):
 def handle_message(message):
     try:
         user_text = message.text.lower()
-
-        # Если пользователь просит найти что-то в интернете
         if "найди" in user_text or "поищи" in user_text or "погугли" in user_text:
             search_results = search_web(message.text)
             bot.reply_to(message, f"🔍 Результаты поиска:\n\n{search_results}")
         else:
-            # Обычный ответ через Groq
             completion = client.chat.completions.create(
                 model="llama3-70b-8192",
                 messages=[{"role": "user", "content": message.text}],
