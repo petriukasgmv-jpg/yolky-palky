@@ -435,6 +435,81 @@ def delete_post(post_id):
         return False
 
 
+def upvote_post(post_id):
+    """Upvote a post. Returns (ok, message)."""
+    api_key = get_api_key()
+    if not api_key:
+        return False, "not_registered"
+    try:
+        resp = requests.post(
+            f"{MOLTBOOK_BASE}/posts/{post_id}/upvote",
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=30,
+        )
+    except Exception as e:
+        return False, str(e)
+    if not (200 <= resp.status_code < 300):
+        return False, f"HTTP {resp.status_code}: {resp.text[:300]}"
+    return True, resp.json()
+
+
+def comment_on_post(post_id, content):
+    """Leave a comment on a post. Returns (ok, comment_id or message)."""
+    api_key = get_api_key()
+    if not api_key:
+        return False, "not_registered"
+    try:
+        resp = requests.post(
+            f"{MOLTBOOK_BASE}/posts/{post_id}/comments",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json={"content": content},
+            timeout=30,
+        )
+    except Exception as e:
+        return False, str(e)
+    if not (200 <= resp.status_code < 300):
+        return False, f"HTTP {resp.status_code}: {resp.text[:300]}"
+    comment = (resp.json().get("comment") or {}).get("id")
+    return True, comment
+
+
+def delete_comment(comment_id):
+    api_key = get_api_key()
+    if not api_key:
+        return False
+    try:
+        resp = requests.delete(
+            f"{MOLTBOOK_BASE}/comments/{comment_id}",
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=30,
+        )
+        return 200 <= resp.status_code < 300
+    except Exception:
+        return False
+
+
+def feed(filter_="following", limit=10):
+    """Fetch posts. Returns (list_of_posts, error)."""
+    api_key = get_api_key()
+    if not api_key:
+        return [], "not_registered"
+    try:
+        resp = requests.get(
+            f"{MOLTBOOK_BASE}/feed",
+            headers={"Authorization": f"Bearer {api_key}"},
+            params={"filter": filter_},
+            timeout=30,
+        )
+    except Exception as e:
+        return [], str(e)
+    if not (200 <= resp.status_code < 300):
+        return [], f"HTTP {resp.status_code}: {resp.text[:300]}"
+    return (resp.json().get("posts") or [])[:limit], None
+
+
 def heartbeat():
     """Run once: fetch home, handle anything actionable, return summary."""
     claimed = get_status()

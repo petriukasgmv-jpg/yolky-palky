@@ -172,6 +172,90 @@ def _pick_moltbook_topic():
     return _MOLTBOOK_TOPICS[idx]
 
 
+MOLTBOOK_ACTIVITY_INTERVAL = int(os.getenv("MOLTBOOK_ACTIVITY_INTERVAL", "21600"))
+MOLTBOOK_MAX_UPVOTES = int(os.getenv("MOLTBOOK_MAX_UPVOTES", "5"))
+
+_touched_posts = set()
+_last_moltbook_activity_at = [0.0]
+
+
+def _gen_comment(post_content):
+    """Draft a short, respectful English comment for another agent's post."""
+    try:
+        completion = client.chat.completions.create(
+            model=MODEL,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a business strategist. Write ONE short, genuinely "
+                        "useful and respectful comment (1-2 sentences) in English "
+                        "about the post below. Do not invent facts. Remove any "
+                        "buzzword salad. Reply with only the comment text."
+                    ),
+                },
+                {"role": "user", "content": post_content[:1500]},
+            ],
+            reasoning_effort="low",
+            include_reasoning=False,
+            max_completion_tokens=1000,
+        )
+        text = (completion.choices[0].message.content or "").strip()
+        return text or None
+    except Exception:
+        traceback.print_exc()
+        return None
+
+
+def _moltbook_social_activity():
+    """Like and occasionally comment on feed posts, at a slow cadence.
+
+    Runs no more than once per MOLTBOOK_ACTIVITY_INTERVAL to stay useful
+    without spamming. Upvotes are free; a comment is drafted via Groq.
+    """
+    global _last_moltbook_activity_at
+    if time.time() - _last_moltbook_activity_at[0] < MOLTBOOK_ACTIVITY_INTERVAL:
+        return
+
+    try:
+        posts, err = moltbook.feed(filter_="following", limit=10)
+        if err or not posts:
+            return
+        done = 0
+        for p in posts:
+            pid = p.get("id")
+            if not pid or pid in _touched_posts:
+                continue
+            ok, _ = moltbook.upvote_post(pid)
+            if ok:
+                _touched_posts.add(pid)
+                done += 1
+            if done >= MOLTBOOK_MAX_UPVOTES:
+                break
+
+        # One thoughtful comment per interval, if a fresh post is available.
+        for p in posts:
+            pid = p.get("id")
+            if not pid or pid in _touched_posts:
+                continue
+            content = p.get("content") or ""
+            if not content:
+                continue
+            comment = _gen_comment(content)
+            if not comment:
+                break
+            ok, cid = moltbook.comment_on_post(pid, comment[:500])
+            if ok:
+                _touched_posts.add(pid)
+            break
+
+        _last_moltbook_activity_at[0] = time.time()
+        print(f"=== MOLTBOOK ACTIVITY: {done} upvotes ===", flush=True)
+    except Exception:
+        print("=== MOLTBOOK ACTIVITY ERROR ===", flush=True)
+        traceback.print_exc()
+
+
 def moltbook_heartbeat_loop():
     """Registered agent checks in and posts periodically to Moltbook."""
     while True:
@@ -182,11 +266,12 @@ def moltbook_heartbeat_loop():
                 print("=== MOLTBOOK HEARTBEAT ===", flush=True)
                 print(summary, flush=True)
                 _moltbook_post_update()
+                _moltbook_social_activity()
                 moltbook.notify_on_update(bot, reminders._active_chat_ids())
         except Exception:
             print("=== MOLTBOOK HEARTBEAT ERROR ===", flush=True)
             traceback.print_exc()
-        time.sleep(MOLTBOOK_CHECK_INTERVAL)
+        time.sleep(MOLTBOOK_CHECK_INTERVAL)  # keep a proper delay between beats
 
 
 if MOLTBOOK_ENABLED:
