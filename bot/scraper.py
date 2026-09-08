@@ -1,4 +1,4 @@
-import re
+from urllib.parse import quote
 
 import groq_utils
 
@@ -11,9 +11,12 @@ SEARCH_PROMPT = (
     "в Литву/Польшу/Латвию.\n"
     "Задача: найти РЕАЛЬНЫЕ объявления и цены по запросу на "
     "vinted.de, ebay.de, kleinanzeigen.de.\n"
-    "Выведи до 8 конкретных результатов: товар, цена в €, площадка, ссылка. "
-    "Только факты из найденного. Если ничего найдено — так и напиши. "
-    "Не выдумывай цены и ссылки."
+    "Выведи до 8 конкретных результатов: товар, цена в €, площадка, ссылка.\n"
+    "СРОГО: используй ТОЛЬКО ссылки, которые реально есть в результатах "
+    "поиска browser_search. НИКОГДА не выдумывай и не составляй ссылки по "
+    "шаблонам. Если ссылка найдена — вставь её дословно как есть.\n"
+    "Если результатов нет или цены не подтверждены — напиши честно "
+    "'Не удалось найти реальные объявления' и не придумывай ничего."
 )
 
 FALLBACK_HELP = (
@@ -56,10 +59,11 @@ def search_prices(client, query):
 
 
 def sanitize_query(text):
-    """Turn free text into a safe URL/keyword string."""
-    cleaned = re.sub(r"[^a-zA-ZäöüÄÖÜß0-9 -]", "", text)
-    words = [w for w in cleaned.split() if w]
-    return "+".join(words)
+    """Turn free text into a safe URL-encoded keyword string."""
+    words = text.split()
+    if not words:
+        return ""
+    return quote(" ".join(words), safe="")
 
 
 def manual_search_links(query):

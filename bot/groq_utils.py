@@ -5,8 +5,9 @@ def chat_with_search(client, model, messages, max_tokens=2000):
     """Call Groq chat with browser_search available.
 
     Tries with tool_choice="required" first (guarantees live web data).
-    If the model refuses to call the tool (tool_use_failed), retries
-    without enforcing the tool so the user still gets an answer.
+    If the model refuses to call the tool (tool_use_failed /
+    output_parse_failed), retries with tool_choice="auto" so the model
+    can still decide to search but will not be forced.
 
     Returns the final message content (str) or raises on fatal errors.
     """
@@ -26,10 +27,13 @@ def chat_with_search(client, model, messages, max_tokens=2000):
     except Exception as e:
         if not _is_tool_use_failed(e):
             raise
-        # Model refused to call the tool: fall back to a plain answer.
+        # Model refused the forced tool: retry in "auto" mode. The model
+        # may still run browser_search itself and return web results.
         completion = client.chat.completions.create(
             model=model,
             messages=messages,
+            tools=tools,
+            tool_choice="auto",
             reasoning_effort="low",
             include_reasoning=False,
             max_completion_tokens=max_tokens,
