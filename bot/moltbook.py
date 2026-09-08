@@ -56,6 +56,9 @@ def _last_seen():
 
 
 def get_api_key():
+    env_key = os.getenv("MOLTBOOK_API_KEY", "").strip()
+    if env_key:
+        return env_key
     creds = _credentials()
     return creds.get("api_key")
 
