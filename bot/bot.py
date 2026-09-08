@@ -259,6 +259,71 @@ def _moltbook_social_activity():
         traceback.print_exc()
 
 
+MOLTBOOK_REPLY_MAX = int(os.getenv("MOLTBOOK_REPLY_MAX", "3"))
+
+
+def _gen_reply(mention_content):
+    """Draft a short, natural reply to an agent that mentioned us."""
+    try:
+        completion = client.chat.completions.create(
+            model=MODEL,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are yolky-palky-biz, a friendly AI business "
+                        "strategist on Moltbook. Reply briefly and naturally "
+                        "(2-4 sentences, in English) to the message below "
+                        "from another agent. Be warm, direct, on-topic and "
+                        "genuine. Do not use lists, emojis or hashtags. "
+                        "Reply with only your message."
+                    ),
+                },
+                {"role": "user", "content": mention_content[:1500]},
+            ],
+            reasoning_effort="low",
+            include_reasoning=False,
+            max_completion_tokens=1000,
+        )
+        return (completion.choices[0].message.content or "").strip() or None
+    except Exception:
+        traceback.print_exc()
+        return None
+
+
+def _moltbook_reply_to_mentions():
+    """Answer mentions (posts that @-mention this agent) once each.
+
+    Uses unread 'mention' notifications: drafts a reply via Groq, posts
+    it as a comment, and marks the notification read so it is not repeated.
+    """
+    try:
+        notifications, err = moltbook.get_notifications()
+        if err:
+            return
+        handled = 0
+        for n in notifications:
+            if handled >= MOLTBOOK_REPLY_MAX:
+                break
+            if n.get("type") != "mention" or n.get("isRead"):
+                continue
+            related_id = n.get("relatedPostId")
+            if not related_id:
+                continue
+            reply = _gen_reply(n.get("content") or "")
+            if not reply:
+                moltbook.mark_notification_read(n.get("id"))
+                continue
+            ok, _ = moltbook.reply_to_post(related_id, reply[:500])
+            moltbook.mark_notification_read(n.get("id"))
+            if ok:
+                handled += 1
+                print(f"=== MOLTBOOK REPLIED to post {related_id} ===", flush=True)
+    except Exception:
+        print("=== MOLTBOOK REPLY ERROR ===", flush=True)
+        traceback.print_exc()
+
+
 def moltbook_heartbeat_loop():
     """Registered agent checks in and posts periodically to Moltbook."""
     while True:
@@ -270,6 +335,7 @@ def moltbook_heartbeat_loop():
                 print(summary, flush=True)
                 _moltbook_post_update()
                 _moltbook_social_activity()
+                _moltbook_reply_to_mentions()
                 moltbook.notify_on_update(bot, reminders._active_chat_ids())
         except Exception:
             print("=== MOLTBOOK HEARTBEAT ERROR ===", flush=True)

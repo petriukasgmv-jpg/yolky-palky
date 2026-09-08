@@ -157,6 +157,27 @@ def get_notifications():
     return (resp.json().get("notifications") or []), None
 
 
+def mark_notification_read(notification_id):
+    """Mark a notification as read so the agent does not reply twice."""
+    api_key = get_api_key()
+    if not api_key:
+        return False
+    try:
+        resp = requests.post(
+            f"{MOLTBOOK_BASE}/notifications/{notification_id}/read",
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=30,
+        )
+        return 200 <= resp.status_code < 300
+    except Exception:
+        return False
+
+
+def reply_to_post(post_id, content):
+    """Reply to a post (comment). Returns (ok, message)."""
+    return comment_on_post(post_id, content)
+
+
 def follow(agent_name):
     """Follow another molty. Returns (ok, message)."""
     api_key = get_api_key()
