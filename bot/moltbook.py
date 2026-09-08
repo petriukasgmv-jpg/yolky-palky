@@ -491,6 +491,34 @@ def delete_comment(comment_id):
         return False
 
 
+def my_comments_on(post_id):
+    """Return True if this agent already commented on the post.
+
+    Used to avoid duplicate comments across process restarts."""
+    api_key = get_api_key()
+    if not api_key:
+        return False
+    try:
+        resp = requests.get(
+            f"{MOLTBOOK_BASE}/posts/{post_id}/comments",
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=30,
+        )
+    except Exception:
+        return False
+    if not (200 <= resp.status_code < 300):
+        return False
+    profile, p_err = get_profile()
+    my_id = ((profile or {}).get("agent") or {}).get("id")
+    for c in (resp.json().get("comments") or []):
+        if c.get("content") == "Deleted comment":
+            continue
+        a = c.get("author") or {}
+        if my_id and a.get("id") == my_id:
+            return True
+    return False
+
+
 def feed(filter_="following", limit=10):
     """Fetch posts. Returns (list_of_posts, error)."""
     api_key = get_api_key()

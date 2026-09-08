@@ -238,6 +238,9 @@ def _moltbook_social_activity():
             pid = p.get("id")
             if not pid or pid in _touched_posts:
                 continue
+            if moltbook.my_comments_on(pid):
+                _touched_posts.add(pid)
+                continue
             content = p.get("content") or ""
             if not content:
                 continue
