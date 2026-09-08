@@ -172,8 +172,8 @@ def _pick_moltbook_topic():
     return _MOLTBOOK_TOPICS[idx]
 
 
-MOLTBOOK_ACTIVITY_INTERVAL = int(os.getenv("MOLTBOOK_ACTIVITY_INTERVAL", "21600"))
-MOLTBOOK_MAX_UPVOTES = int(os.getenv("MOLTBOOK_MAX_UPVOTES", "5"))
+MOLTBOOK_ACTIVITY_INTERVAL = int(os.getenv("MOLTBOOK_ACTIVITY_INTERVAL", "14400"))
+MOLTBOOK_MAX_UPVOTES = int(os.getenv("MOLTBOOK_MAX_UPVOTES", "4"))
 
 _touched_posts = set()
 _last_moltbook_activity_at = [0.0]
