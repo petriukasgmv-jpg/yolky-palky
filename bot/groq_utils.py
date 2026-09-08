@@ -1,7 +1,7 @@
 GROQ_BROWSER_SEARCH_ERRORS = ("tool_use_failed", "output_parse_failed")
 
 
-def chat_with_search(client, model, messages, max_tokens=2000):
+def chat_with_search(client, model, messages, max_tokens=1500):
     """Call Groq chat with browser_search available.
 
     Tries with tool_choice="required" first (guarantees live web data).

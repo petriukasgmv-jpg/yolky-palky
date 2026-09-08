@@ -50,7 +50,7 @@ bot = telebot.TeleBot(
 MOLTBOOK_ENABLED = os.getenv("MOLTBOOK_ENABLED", "1") == "1"
 MOLTBOOK_AGENT_NAME = os.getenv("MOLTBOOK_AGENT_NAME", "yolky-palky-biz")
 MOLTBOOK_CHECK_INTERVAL = int(os.getenv("MOLTBOOK_CHECK_INTERVAL", "1800"))
-MOLTBOOK_POST_INTERVAL = int(os.getenv("MOLTBOOK_POST_INTERVAL", "7200"))
+MOLTBOOK_POST_INTERVAL = int(os.getenv("MOLTBOOK_POST_INTERVAL", "14400"))
 
 _last_moltbook_post_at = [0.0]
 
@@ -155,7 +155,7 @@ WEBHOOK_URL = (
 
 user_histories = {}
 
-MAX_HISTORY = 20
+MAX_HISTORY = 10
 
 
 # =========================

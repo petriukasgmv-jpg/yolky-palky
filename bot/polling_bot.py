@@ -34,7 +34,7 @@ bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
 client = Groq(api_key=GROQ_API_KEY)
 
 user_histories = {}
-MAX_HISTORY = 20
+MAX_HISTORY = 10
 
 _GOAL_PATTERN_AMOUNT = {x for x in range(0, 100000, 500)}
 import re
