@@ -10,6 +10,7 @@ from groq import Groq
 import telebot
 
 import calc
+import groq_utils
 import memory
 import moltbook
 import reminders
@@ -61,8 +62,9 @@ def _moltbook_post_update():
         return None
 
     try:
-        completion = client.chat.completions.create(
-            model=MODEL,
+        content = groq_utils.chat_with_search(
+            client,
+            MODEL,
             messages=[
                 {
                     "role": "system",
@@ -76,13 +78,8 @@ def _moltbook_post_update():
                 },
                 {"role": "user", "content": "Составь пост."},
             ],
-            tools=[{"type": "browser_search"}],
-            tool_choice="required",
-            reasoning_effort="low",
-            include_reasoning=False,
-            max_completion_tokens=600,
+            max_tokens=600,
         )
-        content = completion.choices[0].message.content
         if not content:
             return None
         title = "Business Idea Test 💡 — how to check an idea with minimum money"
@@ -575,25 +572,16 @@ def handle_message(message):
             flush=True
         )
 
-        completion = client.chat.completions.create(
-            model=MODEL,
+        answer = groq_utils.chat_with_search(
+            client,
+            MODEL,
             messages=messages,
-            tools=[
-                {
-                    "type": "browser_search"
-                }
-            ],
-            tool_choice="required",
-            reasoning_effort="low",
-            include_reasoning=False
         )
 
         print(
             "=== GROQ RESPONSE RECEIVED ===",
             flush=True
         )
-
-        answer = completion.choices[0].message.content
 
         if not answer:
 

@@ -1,5 +1,7 @@
 import re
 
+import groq_utils
+
 MODEL = "openai/gpt-oss-20b"
 
 SEARCH_PROMPT = (
@@ -31,8 +33,9 @@ def search_prices(client, query):
         return None, "empty query"
 
     try:
-        completion = client.chat.completions.create(
-            model=MODEL,
+        content = groq_utils.chat_with_search(
+            client,
+            MODEL,
             messages=[
                 {"role": "system", "content": SEARCH_PROMPT},
                 {
@@ -43,13 +46,8 @@ def search_prices(client, query):
                     ),
                 },
             ],
-            tools=[{"type": "browser_search"}],
-            tool_choice="required",
-            reasoning_effort="low",
-            include_reasoning=False,
-            max_completion_tokens=1200,
+            max_tokens=1200,
         )
-        content = completion.choices[0].message.content
         if not content:
             return None, "empty response"
         return content, None

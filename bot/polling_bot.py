@@ -8,6 +8,7 @@ from groq import Groq
 import telebot
 
 import calc
+import groq_utils
 import memory
 import reminders
 import scraper
@@ -276,16 +277,11 @@ def handle_message(message):
     messages.extend(history)
 
     try:
-        completion = client.chat.completions.create(
-            model=MODEL,
+        answer = groq_utils.chat_with_search(
+            client,
+            MODEL,
             messages=messages,
-            tools=[{"type": "browser_search"}],
-            tool_choice="required",
-            reasoning_effort="low",
-            include_reasoning=False,
         )
-
-        answer = completion.choices[0].message.content
 
         if not answer:
             answer = "Не удалось получить ответ. Попробуй ещё раз."
