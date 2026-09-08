@@ -45,6 +45,16 @@ def _save_state(data):
     _save_json(STATE_FILE, data)
 
 
+def _set_last_seen(**fields):
+    state = _state()
+    state.setdefault("last_seen", {}).update(fields)
+    _save_state(state)
+
+
+def _last_seen():
+    return _state().get("last_seen") or {}
+
+
 def get_api_key():
     creds = _credentials()
     return creds.get("api_key")
@@ -106,6 +116,92 @@ def get_status():
     if not (200 <= resp.status_code < 300):
         return {"error": f"HTTP {resp.status_code}: {resp.text[:300]}"}
     return resp.json()
+
+
+def get_profile():
+    """Full profile of the registered agent (karma, followers, posts...)."""
+    api_key = get_api_key()
+    if not api_key:
+        return None, "not_registered"
+    try:
+        resp = requests.get(
+            f"{MOLTBOOK_BASE}/agents/me",
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=30,
+        )
+    except Exception as e:
+        return None, str(e)
+    if not (200 <= resp.status_code < 300):
+        return None, f"HTTP {resp.status_code}: {resp.text[:300]}"
+    return resp.json(), None
+
+
+def get_notifications():
+    """List notifications. Returns (list, error)."""
+    api_key = get_api_key()
+    if not api_key:
+        return [], "not_registered"
+    try:
+        resp = requests.get(
+            f"{MOLTBOOK_BASE}/notifications",
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=30,
+        )
+    except Exception as e:
+        return [], str(e)
+    if not (200 <= resp.status_code < 300):
+        return [], f"HTTP {resp.status_code}: {resp.text[:300]}"
+    return (resp.json().get("notifications") or []), None
+
+
+def follow(agent_name):
+    """Follow another molty. Returns (ok, message)."""
+    api_key = get_api_key()
+    if not api_key:
+        return False, "not_registered"
+    try:
+        resp = requests.post(
+            f"{MOLTBOOK_BASE}/agents/{agent_name}/follow",
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=30,
+        )
+    except Exception as e:
+        return False, str(e)
+    if not (200 <= resp.status_code < 300):
+        return False, f"HTTP {resp.status_code}: {resp.text[:300]}"
+    return True, resp.json()
+
+
+def get_my_posts():
+    """Fetch posts authored by this agent with their scores.
+
+    Returns (list_of_posts, error). Used to learn which topics land well.
+    """
+    api_key = get_api_key()
+    if not api_key:
+        return [], "not_registered"
+    profile, err = get_profile()
+    if err:
+        return [], err
+    agent_id = (profile.get("agent") or {}).get("id")
+    try:
+        resp = requests.get(
+            f"{MOLTBOOK_BASE}/posts",
+            headers={"Authorization": f"Bearer {api_key}"},
+            params={"author_agent_id": agent_id},
+            timeout=30,
+        )
+    except Exception as e:
+        return [], str(e)
+    if not (200 <= resp.status_code < 300):
+        return [], f"HTTP {resp.status_code}: {resp.text[:300]}"
+    posts = resp.json().get("posts") or []
+    mine = [
+        p for p in posts
+        if (p.get("author_id") == agent_id)
+        or ((p.get("author") or {}).get("id") == agent_id)
+    ]
+    return mine, None
 
 
 def home():
@@ -345,3 +441,68 @@ def heartbeat():
         "activity_count": len(home_data.get("activity_on_your_posts") or []),
         "what_to_do_next": home_data.get("what_to_do_next"),
     }
+
+
+def notify_on_update(bot, owner_chat_ids):
+    """Compare Moltbook metrics against last known ones and notify the owner
+    in Telegram about new followers / karma / unread notifications.
+
+    Returns a list of messages that were sent."""
+    profile, err = get_profile()
+    if err:
+        return []
+    agent = (profile or {}).get("agent") or {}
+    agent_id = agent.get("id")
+
+    followers = agent.get("follower_count") or 0
+    karma = agent.get("karma") or 0
+    name = agent.get("display_name") or agent.get("name") or "moltbook agent"
+
+    last = _last_seen()
+    msgs = []
+
+    prev_followers = last.get("followers", 0)
+    prev_karma = last.get("karma", 0)
+    prev_posts = last.get("posts", 0)
+
+    posts_now = agent.get("posts_count") or 0
+
+    # New follower(s)
+    if followers > prev_followers:
+        diff = followers - prev_followers
+        msgs.append(
+            f"🤝 Нов{('' if diff == 1 else 'ые')} подписчик(и) на Moltbook: "
+            f"+{diff} (теперь {followers}) у {name}."
+        )
+
+    # Karma movement
+    if karma != prev_karma:
+        msgs.append(
+            f"⭐ Карма Moltbook изменилась: {prev_karma} → {karma} (агент {name})."
+        )
+
+    # Unread notifications
+    notifications, nerr = get_notifications()
+    if not nerr and notifications:
+        new_on = []
+        for n in notifications:
+            if not n.get("isRead"):
+                new_on.append(n.get("content") or "")
+        if new_on:
+            msgs.append("📬 Новые уведомления Moltbook:\n• " + "\n• ".join(new_on[:5]))
+
+    # Milestone: first post published
+    if posts_now > prev_posts:
+        msgs.append(
+            f"📝 Агент {name} опубликовал {posts_now} пост(а/ов) на Moltbook."
+        )
+
+    if msgs:
+        _set_last_seen(followers=followers, karma=karma, posts=posts_now)
+        for chat_id in owner_chat_ids:
+            try:
+                for m in msgs:
+                    bot.send_message(chat_id, m, disable_web_page_preview=True)
+            except Exception:
+                pass
+    return msgs

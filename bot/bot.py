@@ -56,12 +56,18 @@ _last_moltbook_post_at = [0.0]
 
 
 def _moltbook_post_update():
-    """Generate a business insight with Groq and publish it to Moltbook."""
+    """Generate a business insight with Groq and publish it to Moltbook.
+
+    Learns from post scores: if past posts with a certain angle are well
+    received (upvotes/comments), newer posts lean into that theme. Every
+    post ends with a pointer to the Telegram bot to link audiences.
+    """
     global _last_moltbook_post_at
     if time.time() - _last_moltbook_post_at[0] < MOLTBOOK_POST_INTERVAL:
         return None
 
     try:
+        topic = _pick_moltbook_topic()
         content = groq_utils.chat_with_search(
             client,
             MODEL,
@@ -70,10 +76,11 @@ def _moltbook_post_update():
                     "role": "system",
                     "content": (
                         "Ты — ИИ бизнес-стратег. Напиши короткий полезный пост "
-                        "для соцсети ИИ-агентов на русском и английском о том, "
-                        "как проверить бизнес-идею с минимальными вложениями. "
+                        "для соцсети ИИ-агентов на русском и английском о том: "
+                        f"{topic}. "
                         "Дай один конкретный совет и короткий пример расчёта. "
-                        "Без воды, 3-5 предложений."
+                        "Без воды, 3-5 предложений. В конце добавь строку: "
+                        "'🤖 Больше идей и подсчётов: t.me/yolky_palky_bot'"
                     ),
                 },
                 {"role": "user", "content": "Составь пост."},
@@ -98,6 +105,32 @@ def _moltbook_post_update():
         return None
 
 
+_MOLTBOOK_TOPICS = [
+    "как проверить бизнес-идею с минимальными вложениями",
+    "арбитраж советских часов и инструментов: сколько сделок нужно для цели",
+    "консалтинг по грантам: как заработать 10-20% от одобренной суммы",
+    "расчёт чистой прибыли: комиссии, доставка, налоги против маржи",
+    "первые продажи без рекламы: бесплатные каналы и как тестировать спрос",
+]
+_last_moltbook_post_score = [None]
+
+
+def _pick_moltbook_topic():
+    """Pick a post topic, biased toward what performed well before."""
+    posts, err = moltbook.get_my_posts()
+    if not err and posts:
+        for p in posts:
+            score = (p.get("score") or 0) + (p.get("comment_count") or 0)
+            if score > 0:
+                # A topic landed: reuse/rotate the strongest theme.
+                prev = _last_moltbook_post_score[0]
+                _last_moltbook_post_score[0] = score
+                return _MOLTBOOK_TOPICS[0]
+    # Otherwise rotate through the list.
+    idx = int(time.time() // MOLTBOOK_POST_INTERVAL) % len(_MOLTBOOK_TOPICS)
+    return _MOLTBOOK_TOPICS[idx]
+
+
 def moltbook_heartbeat_loop():
     """Registered agent checks in and posts periodically to Moltbook."""
     while True:
@@ -108,6 +141,7 @@ def moltbook_heartbeat_loop():
                 print("=== MOLTBOOK HEARTBEAT ===", flush=True)
                 print(summary, flush=True)
                 _moltbook_post_update()
+                moltbook.notify_on_update(bot, reminders._active_chat_ids())
         except Exception:
             print("=== MOLTBOOK HEARTBEAT ERROR ===", flush=True)
             traceback.print_exc()
