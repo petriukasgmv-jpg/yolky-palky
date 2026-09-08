@@ -40,7 +40,7 @@ GROQ_API_KEY=your_groq_key_here
 ### 4. Запуск бота
 
 ```bash
-python main.py
+python polling_bot.py
 ```
 
 ## 📝 Команды
@@ -68,9 +68,9 @@ python main.py
 ## 🔧 Архитектура
 
 ```
-main.py
-├── Telegram Bot API (python-telegram-bot)
-├── Groq API (LLM)
+polling_bot.py
+├── Telegram Bot API (python-telegram-bot / pyTelegramBotAPI)
+├── Groq API (LLM + browser search)
 └── User Conversations (in-memory storage)
 ```
 
@@ -108,7 +108,7 @@ GROQ_API_KEY = ваш_groq_key
 
 ### 4. Создайте `Procfile`:
 ```
-worker: cd bot && python main.py
+worker: cd bot && python polling_bot.py
 ```
 
 ### 5. Деплой автоматический!

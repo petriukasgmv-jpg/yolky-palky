@@ -52,3 +52,6 @@ logs/
 .cache/
 .pytest_cache/
 .mypy_cache/
+
+# Moltbook agent credentials (keep secret)
+bot/moltbook_credentials.json

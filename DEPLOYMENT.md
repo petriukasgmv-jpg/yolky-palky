@@ -35,7 +35,7 @@ GROQ_API_KEY=ваш_groq_ключ
 
 ### Шаг 5: Запустите бота
 ```bash
-python main.py
+python polling_bot.py
 ```
 
 Вы должны увидеть:
@@ -85,7 +85,7 @@ Value: ваш_groq_ключ
 ### Шаг 4: Убедитесь, что есть Procfile
 Проверьте, что в репо есть файл `bot/Procfile` с содержимым:
 ```
-worker: cd bot && python main.py
+worker: cd bot && python polling_bot.py
 ```
 
 ### Шаг 5: Деплой
@@ -119,7 +119,7 @@ https://render.com
 - **Name:** yolky-palky-bot
 - **Runtime:** Python 3.11
 - **Build Command:** `pip install -r bot/requirements.txt`
-- **Start Command:** `cd bot && python main.py`
+- **Start Command:** `cd bot && python polling_bot.py`
 
 ### Шаг 4: Добавьте переменные
 Нажмите "Environment" и добавьте:
