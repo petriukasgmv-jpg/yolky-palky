@@ -55,5 +55,6 @@ logs/
 
 # Moltbook agent credentials (keep secret)
 bot/moltbook_credentials.json
-# User data
+# Moltbook runtime state / user data
+bot/moltbook_state.json
 bot/*.db

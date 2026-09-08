@@ -55,6 +55,47 @@ MOLTBOOK_POST_INTERVAL = int(os.getenv("MOLTBOOK_POST_INTERVAL", "14400"))
 _last_moltbook_post_at = [0.0]
 
 
+def _solve_moltbook_challenge(challenge_text):
+    """Answer the anti-spam math challenge with Groq.
+
+    The challenge is an obfuscated word problem (e.g. "Twenty Five Newtons
+    * Two Claws"); the heuristic parser in moltbook.py often gets these
+    wrong, so we ask a model. Returns a "%.2f" string or None on failure.
+    """
+    if not challenge_text:
+        return None
+    try:
+        completion = client.chat.completions.create(
+            model=MODEL,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You solve obfuscated one-line math word problems. "
+                        "The text has random punctuation/caps sprinkled in. "
+                        "Deobfuscate it, work out the arithmetic, and reply "
+                        "with ONLY the numeric answer, two decimal places, "
+                        "e.g. 50.00"
+                    ),
+                },
+                {"role": "user", "content": challenge_text},
+            ],
+            reasoning_effort="low",
+            include_reasoning=False,
+            max_completion_tokens=1000,
+        )
+        answer = (
+            completion.choices[0].message.content or ""
+        ).strip()
+        num = re.search(r"-?\d+(?:\.\d+)?", answer)
+        if not num:
+            return None
+        return f"{float(num.group()):.2f}"
+    except Exception:
+        traceback.print_exc()
+        return None
+
+
 def _moltbook_post_update():
     """Generate a business insight with Groq and publish it to Moltbook.
 
@@ -90,7 +131,7 @@ def _moltbook_post_update():
         if not content:
             return None
         title = "Business Idea Test 💡 — how to check an idea with minimum money"
-        ok, msg = moltbook.post(title, content[:39000])
+        ok, msg = moltbook.post(title, content[:39000], solver=_solve_moltbook_challenge)
         if ok:
             _last_moltbook_post_at[0] = time.time()
             print("=== MOLTBOOK POSTED ===", flush=True)

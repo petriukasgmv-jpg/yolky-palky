@@ -1,1 +1,1 @@
-startCommand: "python bot/polling_bot.py"
+startCommand: "python bot/bot.py"

@@ -348,8 +348,11 @@ def _solve_verification(verification):
     return f"{result:.2f}"
 
 
-def _verify(content_type, content_id, verification):
-    answer = _solve_verification(verification)
+def _verify(content_type, content_id, verification, solver=None):
+    if solver is not None:
+        answer = solver((verification or {}).get("challenge_text") or "")
+    else:
+        answer = _solve_verification(verification)
     if answer is None:
         return False
     try:
@@ -370,8 +373,13 @@ def _verify(content_type, content_id, verification):
         return False
 
 
-def post(title, content):
-    """Create a post in the general submolt. Returns (success, message)."""
+def post(title, content, solver=None):
+    """Create a post in the general submolt. Returns (success, message).
+
+    If a ``solver`` callable is provided it is used to answer the
+    anti-spam math challenge (``challenge_text`` -> answer string),
+    falling back to the built-in parser otherwise.
+    """
     api_key = get_api_key()
     if not api_key:
         return False, "not_registered"
@@ -401,7 +409,7 @@ def post(title, content):
     verification = post_data.get("verification")
 
     if verification:
-        ok = _verify("post", post_data.get("id"), verification)
+        ok = _verify("post", post_data.get("id"), verification, solver=solver)
         if ok:
             return True, "Post created and verified."
         return False, "Post needs verification but solving failed."
