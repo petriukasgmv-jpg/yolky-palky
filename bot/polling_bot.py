@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 from groq import Groq
 import telebot
 
+import memory
 from prompt import SYSTEM_PROMPT
 
 
@@ -27,16 +28,28 @@ client = Groq(api_key=GROQ_API_KEY)
 user_histories = {}
 MAX_HISTORY = 20
 
+_GOAL_PATTERN_AMOUNT = {x for x in range(0, 100000, 500)}
+import re
+
+
+def _parse_amount(text):
+    m = re.search(r"(\d[\d ]*)", text.replace(",", "").replace(".", ""))
+    if not m:
+        return None
+    return int(m.group(1).replace(" ", ""))
+
 
 @bot.message_handler(commands=["start"])
 def start(message):
+    memory.ensure_user(message)
     user_histories[message.from_user.id] = []
     bot.send_message(
         message.chat.id,
         "Привет! Я Ёлки-палки — твой ИИ-Бизнес-Стратег.\n\n"
         "Моя задача — помочь тебе двигаться к цели "
         "€5 000 чистой прибыли в месяц.\n\n"
-        "Рассказывай, что хочешь сделать."
+        "Рассказывай, что хочешь сделать.\n\n"
+        "Настроить профиль: /profile, цель: /goal, статус: /status"
     )
 
 
@@ -51,7 +64,13 @@ def help_command(message):
         "• искать актуальные цены и конкурентов в интернете\n"
         "• рассчитывать продажи для €5 000\n"
         "• помогать искать первых клиентов\n"
-        "• составлять пошаговый план"
+        "• составлять пошаговый план\n\n"
+        "Команды:\n"
+        "/goal 5000 — установить цель (€)\n"
+        "/profile — посмотреть профиль\n"
+        "/profile навыки: сварка, мебель; город: Мюнхен; бюджет: 500 — заполнить\n"
+        "/status — прогресс к цели\n"
+        "/clear — очистить историю"
     )
 
 
@@ -59,6 +78,87 @@ def help_command(message):
 def clear_command(message):
     user_histories.pop(message.from_user.id, None)
     bot.send_message(message.chat.id, "История очищена.")
+
+
+@bot.message_handler(commands=["goal"])
+def goal_command(message):
+    user_id = message.from_user.id
+    memory.ensure_user(message)
+    args = message.text.split(maxsplit=1)
+    if len(args) > 1:
+        amount = _parse_amount(args[1])
+        if not amount or amount <= 0:
+            bot.send_message(
+                message.chat.id,
+                "Не понял число. Пример: /goal 5000",
+            )
+            return
+        memory.set_goal(user_id, amount)
+        bot.send_message(
+            message.chat.id,
+            f"🎯 Цель установлена: €{amount:,} чистой прибыли в месяц.",
+        )
+        return
+    u = memory.get_user(user_id)
+    if u and u.get("goal_euro"):
+        bot.send_message(
+            message.chat.id,
+            f"Текущая цель: €{u['goal_euro']:,} чистыми/мес.\n"
+            "Изменить: /goal <сумма>",
+        )
+    else:
+        bot.send_message(
+            message.chat.id,
+            "Цель ещё не задана. Задай, например: /goal 5000",
+        )
+
+
+@bot.message_handler(commands=["profile"])
+def profile_command(message):
+    user_id = message.from_user.id
+    memory.ensure_user(message)
+    args = message.text.split(maxsplit=1)
+    if len(args) > 1:
+        text = args[1]
+        for key in ("навыки", "скилы", "skills"):
+            if re.search(rf"{key}\s*:", text, re.IGNORECASE):
+                val = re.split(rf"{key}\s*:", text, 1, re.IGNORECASE)[1]
+                val = re.split(r":", val, 1)[0].strip(" ,;")
+                if val:
+                    memory.set_skills(user_id, val)
+                    text = re.sub(rf"{key}\s*:{val}", "", text, flags=re.IGNORECASE)
+        for key in ("город", "городе", "city"):
+            if re.search(rf"{key}\s*:", text, re.IGNORECASE):
+                val = re.split(rf"{key}\s*:", text, 1, re.IGNORECASE)[1]
+                val = re.split(r":", val, 1)[0].strip(" ,;")
+                if val:
+                    memory.set_city(user_id, val)
+        budget = re.search(r"бюджет\s*:\s*(\d[\d ]*)", text, re.IGNORECASE)
+        if budget:
+            amount = int(budget.group(1).replace(" ", ""))
+            memory.set_budget(user_id, amount)
+        goal = re.search(r"цель\s*:\s*(\d[\d ]*)", text, re.IGNORECASE)
+        if goal:
+            amount = int(goal.group(1).replace(" ", ""))
+            memory.set_goal(user_id, amount)
+        bot.send_message(
+            message.chat.id,
+            "✅ Профиль обновлён.\n\n" + memory.format_profile(user_id),
+        )
+        return
+    bot.send_message(
+        message.chat.id,
+        memory.format_profile(user_id)
+        + "\n\nЗаполнить можно так:\n"
+        "/profile навыки: сварка, мебель; город: Мюнхен; бюджет: 500",
+    )
+
+
+@bot.message_handler(commands=["status"])
+def status_command(message):
+    user_id = message.from_user.id
+    memory.ensure_user(message)
+    bot.send_message(message.chat.id, memory.progress_line(user_id))
 
 
 @bot.message_handler(func=lambda message: True)
@@ -80,7 +180,11 @@ def handle_message(message):
         history = history[-MAX_HISTORY:]
         user_histories[user_id] = history
 
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT.format(
+            profile=memory.profile_blurb(user_id)
+        )}
+    ]
     messages.extend(history)
 
     try:

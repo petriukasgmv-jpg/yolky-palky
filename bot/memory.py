@@ -1,0 +1,150 @@
+import os
+import sqlite3
+import time
+
+DB_PATH = os.path.join(os.path.dirname(__file__), "userstate.db")
+
+_SCHEMA = """
+CREATE TABLE IF NOT EXISTS users (
+    user_id      INTEGER PRIMARY KEY,
+    chat_id      INTEGER,
+    first_name   TEXT,
+    username     TEXT,
+    goal_euro    INTEGER,
+    skills       TEXT,
+    city         TEXT,
+    budget_euro  INTEGER,
+    about        TEXT,
+    created_at   INTEGER,
+    updated_at   INTEGER
+);
+"""
+
+
+def _conn():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    conn.execute(_SCHEMA)
+    return conn
+
+
+def ensure_user(message):
+    user = message.from_user
+    conn = _conn()
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT user_id FROM users WHERE user_id = ?",
+        (user.id,),
+    )
+    if cur.fetchone() is None:
+        cur.execute(
+            "INSERT INTO users "
+            "(user_id, chat_id, first_name, username, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (user.id, message.chat.id, user.first_name, user.username,
+             int(time.time()), int(time.time())),
+        )
+    else:
+        cur.execute(
+            "UPDATE users SET chat_id = ?, updated_at = ? WHERE user_id = ?",
+            (message.chat.id, int(time.time()), user.id),
+        )
+    conn.commit()
+    conn.close()
+
+
+def get_user(user_id):
+    conn = _conn()
+    row = conn.execute(
+        "SELECT * FROM users WHERE user_id = ?",
+        (user_id,),
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def _update(user_id, **fields):
+    if not fields:
+        return
+    fields["updated_at"] = int(time.time())
+    cols = ", ".join(f"{k} = ?" for k in fields)
+    vals = list(fields.values()) + [user_id]
+    conn = _conn()
+    conn.execute(f"UPDATE users SET {cols} WHERE user_id = ?", vals)
+    conn.commit()
+    conn.close()
+
+
+def set_goal(user_id, amount):
+    _update(user_id, goal_euro=int(amount))
+
+
+def set_budget(user_id, amount):
+    _update(user_id, budget_euro=int(amount))
+
+
+def set_city(user_id, city):
+    _update(user_id, city=city)
+
+
+def set_skills(user_id, skills):
+    _update(user_id, skills=skills)
+
+
+def set_about(user_id, about):
+    _update(user_id, about=about)
+
+
+def profile_blurb(user_id):
+    """A short text about the user, injected into the system prompt."""
+    u = get_user(user_id)
+    if not u:
+        return ""
+    parts = []
+    if u.get("skills"):
+        parts.append(f"Навыки: {u['skills']}")
+    if u.get("city"):
+        parts.append(f"Город: {u['city']}")
+    if u.get("budget_euro"):
+        parts.append(f"Стартовый бюджет: €{u['budget_euro']}")
+    if u.get("goal_euro"):
+        parts.append(f"Цель: €{u['goal_euro']} чистой прибыли в месяц")
+    if u.get("about"):
+        parts.append(f"О себе: {u['about']}")
+    if not parts:
+        return ""
+    return "ДАННЫЕ ПОЛЬЗОВАТЕЛЯ:\n" + "\n".join("- " + p for p in parts) + "\n"
+
+
+def format_profile(user_id):
+    u = get_user(user_id)
+    if not u:
+        return "Профиль не настроен."
+    lines = []
+    goal = u.get("goal_euro")
+    lines.append(f"🎯 Цель: €{goal:,} чистыми/мес" if goal
+                 else "🎯 Цель: не задана")
+    lines.append(f"🧰 Навыки: {u['skills']}" if u.get("skills")
+                 else "🧰 Навыки: не указаны")
+    lines.append(f"📍 Город: {u['city']}" if u.get("city")
+                 else "📍 Город: не указан")
+    lines.append(f"💰 Бюджет: €{u['budget_euro']:,}" if u.get("budget_euro")
+                 else "💰 Бюджет: не указан")
+    if u.get("about"):
+        lines.append(f"📝 О себе: {u['about']}")
+    return "Профиль:\n" + "\n".join(lines)
+
+
+def progress_line(user_id):
+    u = get_user(user_id)
+    if not u or not u.get("goal_euro"):
+        return ("Цель ещё не задана. Стань цель командой, например:\n"
+                "/goal 5000")
+    goal = u["goal_euro"]
+    return (
+        f"🎯 Цель: €{goal:,} чистой прибыли в месяц.\n"
+        f"Прогресс пока не отмечается — первый шаг:\n"
+        f"1. Задай одну бизнес-идею для анализа\n"
+        f"2. Протестируй спрос на неё без вложений\n"
+        f"3. Получи первый заказ\n"
+    )
