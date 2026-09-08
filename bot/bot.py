@@ -9,8 +9,11 @@ from flask import Flask, request
 from groq import Groq
 import telebot
 
+import calc
 import memory
 import moltbook
+import reminders
+import scraper
 from prompt import SYSTEM_PROMPT
 
 
@@ -119,6 +122,16 @@ if MOLTBOOK_ENABLED:
         target=moltbook_heartbeat_loop,
         daemon=True,
         name="moltbook-heartbeat",
+    ).start()
+
+REMINDEURS_ENABLED = os.getenv("REMINDEURS_ENABLED", "1") == "1"
+
+if REMINDEURS_ENABLED:
+    threading.Thread(
+        target=reminders.daily_reminder_loop,
+        args=(bot,),
+        daemon=True,
+        name="reminders",
     ).start()
 
 
@@ -266,6 +279,8 @@ def help_command(message):
         "/goal 5000 — установить цель (€)\n"
         "/profile — посмотреть профиль\n"
         "/profile навыки: сварка, мебель; город: Мюнхен; бюджет: 500 — заполнить\n"
+        "/calc цена:250 себест:50 — экономика одной продажи\n"
+        "/price наручные часы СССР — актуальные цены на барахолках\n"
         "/status — прогресс к цели\n"
         "/clear — очистить историю"
     )
@@ -397,6 +412,114 @@ def status_command(message):
     memory.ensure_user(message)
 
     bot.send_message(message.chat.id, memory.progress_line(user_id))
+
+
+@bot.message_handler(commands=["calc"])
+def calc_command(message):
+
+    user_id = message.from_user.id
+
+    memory.ensure_user(message)
+
+    args = message.text.split(maxsplit=1)
+
+    if len(args) < 2:
+
+        bot.send_message(message.chat.id, calc.HELP_TEXT)
+
+        return
+
+    parsed = calc.parse_calc_args(args[1])
+
+    if "price" not in parsed or "cost" not in parsed:
+
+        bot.send_message(
+            message.chat.id,
+            "Нужны минимум: цена и себестоимость. Пример:\n"
+            "/calc цена:250 себест:50",
+        )
+
+        return
+
+    user = memory.get_user(user_id)
+    goal = parsed.get("goal") or (user or {}).get("goal_euro") or 5000
+
+    result = calc.calculate(
+        price=parsed["price"],
+        cost=parsed["cost"],
+        sales=parsed.get("sales", 1),
+        fee=parsed.get("fee", 0),
+        shipping=parsed.get("shipping", 0),
+        goal=goal,
+    )
+
+    if not result:
+
+        bot.send_message(message.chat.id, "Цена должна быть больше 0.")
+
+        return
+
+    text = calc.render_calc(result)
+
+    if not parsed.get("goal") and not (user or {}).get("goal_euro"):
+
+        text += "\n\n💡 Задай цель: /goal 5000"
+
+    bot.send_message(message.chat.id, text)
+
+
+@bot.message_handler(commands=["price"])
+def price_command(message):
+
+    user_id = message.from_user.id
+
+    args = message.text.split(maxsplit=1)
+
+    if len(args) < 2:
+
+        bot.send_message(
+            message.chat.id,
+            "Что ищем? Примеры:\n"
+            "/price советские наручные часы\n"
+            "/price кожаная куртка 90-х\n"
+            "/price бинокль СССР",
+        )
+
+        return
+
+    query = args[1]
+
+    bot.send_message(
+        message.chat.id,
+        f"🔎 Ищу актуальные цены: {query}\n\nПодожди пару секунд...",
+    )
+
+    text, err = scraper.search_prices(client, query)
+
+    if err or not text:
+
+        msg = scraper.FALLBACK_HELP + "\n"
+
+        if err:
+            msg += f"Ошибка: {err}\n"
+
+        msg += "\n" + scraper.manual_search_links(query)
+
+        bot.send_message(message.chat.id, msg)
+
+        return
+
+    prefix = f"🔎 Цены по запросу: {query}\n\n"
+
+    max_length = 4000
+
+    body = prefix + text
+
+    for i in range(0, len(body), max_length):
+
+        bot.send_message(message.chat.id, body[i:i + max_length])
+
+    bot.send_message(message.chat.id, scraper.manual_search_links(query))
 
 
 # =========================
