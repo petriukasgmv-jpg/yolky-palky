@@ -6,6 +6,7 @@ import traceback
 from dotenv import load_dotenv
 from groq import Groq
 import telebot
+from telebot import types
 
 import calc
 import groq_utils
@@ -246,8 +247,10 @@ def handle_message(message):
 
     memory.append_message(user_id, "user", user_text)
 
-    prior = memory.format_prior_ideas(
-        memory.remember_ideas(user_id, user_text)
+    context = (
+        memory.format_prior_ideas(memory.remember_ideas(user_id, user_text))
+        + memory.feedback_lessons(user_id)
+        + memory.format_reflections(memory.get_reflections(user_id))
     )
 
     history = memory.get_history(user_id, MAX_HISTORY)
@@ -255,7 +258,7 @@ def handle_message(message):
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT.format(
             profile=memory.profile_blurb(user_id),
-            prior=prior,
+            context=context,
         )}
     ]
     messages.extend(history)
@@ -271,11 +274,27 @@ def handle_message(message):
             answer = "Не удалось получить ответ. Попробуй ещё раз."
 
         memory.append_message(user_id, "assistant", answer)
-        memory.maybe_save_analysis(user_id, user_text, answer)
+        analysis_id = memory.maybe_save_analysis(user_id, user_text, answer)
 
         max_length = 4000
         for i in range(0, len(answer), max_length):
             bot.send_message(message.chat.id, answer[i:i + max_length])
+
+        if analysis_id:
+            try:
+                kb = types.InlineKeyboardMarkup(row_width=2)
+                kb.add(
+                    types.InlineKeyboardButton("👍 Сработало", callback_data=f"fb:{analysis_id}:1"),
+                    types.InlineKeyboardButton("👎 Нет", callback_data=f"fb:{analysis_id}:-1"),
+                    types.InlineKeyboardButton("Не пробовал", callback_data=f"fb:{analysis_id}:0"),
+                )
+                bot.send_message(
+                    message.chat.id,
+                    "Оцени мой совет — так я буду учиться:",
+                    reply_markup=kb,
+                )
+            except Exception:
+                pass
 
     except Exception:
         traceback.print_exc()
@@ -286,12 +305,99 @@ def handle_message(message):
         )
 
 
+@bot.callback_query_handler(func=lambda c: c.data.startswith("fb:"))
+def on_feedback_callback(callback):
+    try:
+        _, analysis_id_s, rating_s = callback.data.split(":")
+        analysis_id = int(analysis_id_s)
+        rating = int(rating_s)
+        memory.rate_analysis(callback.from_user.id, analysis_id, rating)
+        labels = {1: "👍 Записал: совет сработал!", -1: "👎 Записал: не сработало", 0: "📭 Записал: не пробовал"}
+        try:
+            bot.answer_callback_query(callback.id, labels.get(rating, "Спасибо!"))
+            bot.edit_message_text(
+                "✅ Оценка записана. Учту в будущих советах.",
+                chat_id=callback.message.chat.id,
+                message_id=callback.message.message_id,
+            )
+        except Exception:
+            pass
+    except Exception:
+        traceback.print_exc()
+
+
+def _reflect_user(user_id):
+    """Summarize a user's recent dialogue into a lasting reflection."""
+    since = memory.latest_reflection_rowid(user_id)
+    messages, last_rowid = memory.messages_since(user_id, since_rowid=since, limit=80)
+    if not messages or not last_rowid:
+        return None
+    conv = "\n".join(
+        f"{m['role']}: {m['content']}" for m in messages
+    )[-12000:]
+    try:
+        completion = client.chat.completions.create(
+            model=MODEL,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Ты — рефлексивная часть ИИ-бизнес-стратега. По диалогу "
+                        "пользователя сделай краткую выжимку: какие бизнес-идеи "
+                        "обсуждались, какие расчёты и выводы сделаны, какие шаги "
+                        "пользователь уже сделал или планирует, какие решения "
+                        "приняты. 2-4 предложения на русском, без воды и без "
+                        "оценок вроде «молодец»."
+                    ),
+                },
+                {"role": "user", "content": conv},
+            ],
+            reasoning_effort="low",
+            include_reasoning=False,
+            max_completion_tokens=700,
+        )
+        summary = (completion.choices[0].message.content or "").strip()
+        if summary:
+            memory.save_reflection(user_id, summary, last_rowid)
+            return summary
+    except Exception:
+        traceback.print_exc()
+    return None
+
+
+def self_reflection_loop():
+    """Weekly: distill each active user's dialogue into reflections."""
+    last_reflect = [None]
+    while True:
+        try:
+            now = time.localtime()
+            today = now.tm_yday
+            if now.tm_wday == 6 and last_reflect[0] != today:
+                last_reflect[0] = today
+                for user_id in memory.all_user_ids():
+                    summary = _reflect_user(user_id)
+                    if summary:
+                        print(f"=== REFLECTED user {user_id}: {summary[:60]} ===", flush=True)
+        except Exception:
+            traceback.print_exc()
+        time.sleep(3600)
+
+
+REFLECTIONS_ENABLED = os.getenv("REFLECTIONS_ENABLED", "1") == "1"
+
 if REMINDEURS_ENABLED:
     threading.Thread(
         target=reminders.daily_reminder_loop,
         args=(bot,),
         daemon=True,
         name="reminders",
+    ).start()
+
+if REFLECTIONS_ENABLED:
+    threading.Thread(
+        target=self_reflection_loop,
+        daemon=True,
+        name="self-reflection",
     ).start()
 
 print("🚀 Бот работает!")

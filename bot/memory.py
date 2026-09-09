@@ -40,6 +40,26 @@ CREATE TABLE IF NOT EXISTS analyses (
 );
 
 CREATE INDEX IF NOT EXISTS idx_analyses_user ON analyses(user_id, created_at);
+
+CREATE TABLE IF NOT EXISTS feedback (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     INTEGER NOT NULL,
+    analysis_id INTEGER,
+    rating      INTEGER NOT NULL,
+    created_at  INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_feedback_user ON feedback(user_id, created_at);
+
+CREATE TABLE IF NOT EXISTS reflections (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL,
+    summary    TEXT NOT NULL,
+    since_rowid INTEGER,
+    created_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_reflections_user ON reflections(user_id, created_at);
 """
 
 
@@ -274,7 +294,8 @@ def maybe_save_analysis(user_id, idea, answer):
 
     Only saves when the assistant's reply looks like a real analysis
     (contains verdict / margin / profit markers), keeping the knowledge
-    base clean of chit-chat.
+    base clean of chit-chat. Returns the analysis id (for feedback) or
+    None when nothing was saved.
     """
     if not idea or not answer or not _is_analysis(answer):
         return None
@@ -300,8 +321,47 @@ def maybe_save_analysis(user_id, idea, answer):
         (user_id, user_id, MAX_STORED_ANALYSES),
     )
     conn.commit()
+    analysis_id = cur.lastrowid
     conn.close()
-    return True
+    return analysis_id
+
+
+def rate_analysis(user_id, analysis_id, rating):
+    """Record user feedback (1 = worked, -1 = didn't, 0 = not tried)."""
+    conn = _conn()
+    conn.execute(
+        "DELETE FROM feedback WHERE user_id = ? AND analysis_id = ?",
+        (user_id, analysis_id),
+    )
+    conn.execute(
+        "INSERT INTO feedback (user_id, analysis_id, rating, created_at) "
+        "VALUES (?, ?, ?, ?)",
+        (user_id, analysis_id, int(rating), int(time.time())),
+    )
+    conn.commit()
+    conn.close()
+
+
+def feedback_lessons(user_id):
+    """Summarize past feedback into a context block for the prompt."""
+    conn = _conn()
+    rows = conn.execute(
+        "SELECT a.summary, f.rating FROM feedback f "
+        "JOIN analyses a ON a.id = f.analysis_id "
+        "WHERE f.user_id = ? AND f.rating IN (1, -1) "
+        "ORDER BY f.created_at DESC LIMIT 12",
+        (user_id,),
+    ).fetchall()
+    conn.close()
+    if not rows:
+        return ""
+    parts = []
+    for r in rows:
+        label = "СРАБОТАЛО (усиливай такие советы)" if r["rating"] == 1 \
+            else "НЕ СРАБОТАЛО (предлагай другое в таких случаях)"
+        parts.append(f"• {r['summary'][:80]} — {label}")
+    return ("ОТЗЫВЫ О ТВОИХ СОВЕТАХ (учти в будущих ответах):\n"
+            + "\n".join(parts) + "\n")
 
 
 def _keywords(text):
@@ -367,6 +427,78 @@ def format_prior_ideas(rows):
         "РАНЕЕ ТЫ УЖЕ РАЗБИРАЛ ПОХОЖИЕ ИДЕИ (используй этот опыт, "
         "но не повторяй дословно):\n" + "\n".join(parts) + "\n"
     )
+
+
+def messages_since(user_id, since_rowid=None, limit=100):
+    """Messages for a user, oldest first. Returns (list, max_rowid)."""
+    conn = _conn()
+    if since_rowid is None:
+        rows = conn.execute(
+            "SELECT rowid, role, content FROM messages "
+            "WHERE user_id = ? ORDER BY rowid DESC LIMIT ?",
+            (user_id, limit),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT rowid, role, content FROM messages "
+            "WHERE user_id = ? AND rowid > ? ORDER BY rowid DESC LIMIT ?",
+            (user_id, since_rowid, limit),
+        ).fetchall()
+    rows = list(reversed(rows))
+    conn.close()
+    if not rows:
+        return [], None
+    msgs = [{"role": r["role"], "content": r["content"]} for r in rows]
+    return msgs, rows[-1]["rowid"]
+
+
+def latest_reflection_rowid(user_id):
+    conn = _conn()
+    row = conn.execute(
+        "SELECT MAX(since_rowid) AS m FROM reflections WHERE user_id = ?",
+        (user_id,),
+    ).fetchone()
+    conn.close()
+    return row["m"] if row and row["m"] is not None else 0
+
+
+def save_reflection(user_id, summary, since_rowid):
+    conn = _conn()
+    conn.execute(
+        "INSERT INTO reflections (user_id, summary, since_rowid, created_at) "
+        "VALUES (?, ?, ?, ?)",
+        (user_id, summary, since_rowid, int(time.time())),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_reflections(user_id, limit=5):
+    conn = _conn()
+    rows = conn.execute(
+        "SELECT summary, created_at FROM reflections "
+        "WHERE user_id = ? ORDER BY created_at DESC LIMIT ?",
+        (user_id, limit),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def format_reflections(rows):
+    if not rows:
+        return ""
+    parts = [f"• {r['summary']}" for r in rows if r.get("summary")]
+    if not parts:
+        return ""
+    return ("ТВОИ ИТОГИ ИЗ ПРОШЛЫХ ДИАЛОГОВ (рефлексия, используй при ответе):\n"
+            + "\n".join(parts) + "\n")
+
+
+def all_user_ids():
+    conn = _conn()
+    rows = conn.execute("SELECT DISTINCT user_id FROM messages").fetchall()
+    conn.close()
+    return [r["user_id"] for r in rows]
 
 
 def progress_line(user_id):
