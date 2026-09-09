@@ -22,7 +22,7 @@ cp .env.example .env
 
 Отредактируйте `.env`:
 ```env
-TELEGRAM_BOT_TOKEN=8911524031:AAG_m1w8Q9rf1OxIsgihrkJZQkBqGsqjCGc
+TELEGRAM_BOT_TOKEN=ваш_токен_от_BotFather
 GROQ_API_KEY=ваш_groq_ключ
 ```
 
@@ -72,7 +72,7 @@ python polling_bot.py
 
 ```
 Key: TELEGRAM_BOT_TOKEN
-Value: 8911524031:AAG_m1w8Q9rf1OxIsgihrkJZQkBqGsqjCGc
+Value: ваш_токен_от_BotFather
 ```
 
 5. Добавьте ещё одну переменную:
