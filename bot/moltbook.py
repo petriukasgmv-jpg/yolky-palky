@@ -540,6 +540,31 @@ def my_comments_on(post_id):
     return False
 
 
+def posts_by_agent(agent_name, limit=5):
+    """Fetch posts authored by a specific agent name, newest first.
+
+    Returns (list_of_posts, error). Used to find a post where a new
+    follower can be welcomed in a comment.
+    """
+    api_key = get_api_key()
+    if not api_key:
+        return [], "not_registered"
+    try:
+        resp = requests.get(
+            f"{MOLTBOOK_BASE}/posts",
+            headers={"Authorization": f"Bearer {api_key}"},
+            params={"author": agent_name},
+            timeout=30,
+        )
+    except Exception as e:
+        return [], str(e)
+    if not (200 <= resp.status_code < 300):
+        return [], f"HTTP {resp.status_code}: {resp.text[:300]}"
+    posts = resp.json().get("posts") or []
+    posts.sort(key=lambda p: p.get("created_at") or "", reverse=True)
+    return posts[:limit], None
+
+
 def feed(filter_="following", limit=10):
     """Fetch posts. Returns (list_of_posts, error)."""
     api_key = get_api_key()

@@ -19,19 +19,23 @@ def parse_calc_args(text):
         m = None
         for word in label:
             m = re.search(
-                rf"{word}\s*[:=]\s*(\d[\d ]*)",
+                rf"{word}\s*[:=]\s*(\d[\d ]*)(?:[.,](\d+))?",
                 text,
                 re.IGNORECASE,
             )
             if m:
                 break
         if m:
-            args[key] = float(m.group(1).replace(" ", "").replace(",", "."))
+            whole = m.group(1).replace(" ", "").replace(",", "")
+            frac = m.group(2) or ""
+            args[key] = float(f"{whole}.{frac}" if frac else whole)
     return args
 
 
 def format_euro(value):
-    return f"€{value:,.2f}".replace(",0", "")
+    if value == int(value):
+        return f"€{value:,.0f}"
+    return f"€{value:,.2f}".rstrip("0").rstrip(".")
 
 
 def calculate(price, cost, sales=1, fee=0, shipping=0, goal=5000):
@@ -52,6 +56,7 @@ def calculate(price, cost, sales=1, fee=0, shipping=0, goal=5000):
         "shipping": shipping,
         "unit_profit": unit_profit,
         "margin": margin,
+        "goal": goal,
     }
 
     if sales:
@@ -96,8 +101,9 @@ def render_calc(result):
 
     sales_to_goal = result.get("sales_to_goal")
     if sales_to_goal is not None:
+        goal = result.get("goal") or 5000
         lines.append("")
-        lines.append("🎯 Цель €5 000 чистыми/мес")
+        lines.append(f"🎯 Цель €{goal:,.0f} чистыми/мес")
         lines.append(f"👀 Нужно продаж в месяц: ~{sales_to_goal:,.0f}")
         if sales_to_goal > 200:
             lines.append("⚠️ Больше 200 продаж/мес — высокая нагрузка.")

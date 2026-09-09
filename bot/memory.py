@@ -1,4 +1,5 @@
 import os
+import re
 import sqlite3
 import time
 
@@ -93,6 +94,44 @@ def set_skills(user_id, skills):
 
 def set_about(user_id, about):
     _update(user_id, about=about)
+
+
+_FIELD_KEYS = (
+    ("навыки", "skills"),
+    ("скилы", "skills"),
+    ("skills", "skills"),
+    ("город", "city"),
+    ("городе", "city"),
+    ("city", "city"),
+    ("бюджет", "budget_euro"),
+    ("цель", "goal_euro"),
+)
+
+
+def parse_profile(text):
+    """Parse /profile free text into a dict of recognized fields.
+
+    Profile fields are separated by ';' and given as ``ключ: значение``.
+    Returns a dict with any of: skills, city, budget_euro, goal_euro.
+    """
+    out = {}
+    for segment in text.split(";"):
+        segment = segment.strip()
+        if not segment:
+            continue
+        for key, field in _FIELD_KEYS:
+            m = re.match(rf"{key}\s*:\s*(.+)", segment, re.IGNORECASE)
+            if not m:
+                continue
+            val = m.group(1).strip(" ,;")
+            if field in ("budget_euro", "goal_euro"):
+                num = re.search(r"\d[\d ]*", val)
+                if num:
+                    out[field] = int(num.group().replace(" ", ""))
+            elif val:
+                out[field] = val
+            break
+    return out
 
 
 def profile_blurb(user_id):

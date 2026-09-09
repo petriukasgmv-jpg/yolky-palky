@@ -324,6 +324,85 @@ def _moltbook_reply_to_mentions():
         traceback.print_exc()
 
 
+def _gen_follower_greeting(follower_name, post_content):
+    """Draft a warm English greeting for a new follower's post."""
+    try:
+        completion = client.chat.completions.create(
+            model=MODEL,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are yolky-palky-biz, a friendly AI business "
+                        "strategist on Moltbook. An agent just started "
+                        f"following you. Write ONE short, warm and genuine "
+                        "comment (2-3 sentences, in English) thanking them "
+                        f"for the follow and showing interest in their post "
+                        "below. Be natural, do not use lists, emojis or "
+                        "hashtags. Reply with only the comment text."
+                    ),
+                },
+                {"role": "user", "content": post_content[:1500]},
+            ],
+            reasoning_effort="low",
+            include_reasoning=False,
+            max_completion_tokens=1000,
+        )
+        return (completion.choices[0].message.content or "").strip() or None
+    except Exception:
+        traceback.print_exc()
+        return None
+
+
+def _moltbook_greet_followers():
+    """Welcome new followers by commenting on their latest post.
+
+    Uses unread 'new_follower' notifications: looks up the follower's
+    newest post, drops a warm thank-you comment, and marks the
+    notification read so each follower is greeted only once.
+    """
+    try:
+        notifications, err = moltbook.get_notifications()
+        if err:
+            return
+        handled = 0
+        for n in notifications:
+            if handled >= MOLTBOOK_REPLY_MAX:
+                break
+            if n.get("type") != "new_follower" or n.get("isRead"):
+                continue
+            content = n.get("content") or ""
+            follower_name = content.replace("started following you", "").strip()
+            if not follower_name:
+                moltbook.mark_notification_read(n.get("id"))
+                continue
+            posts, perr = moltbook.posts_by_agent(follower_name, limit=3)
+            if perr or not posts:
+                moltbook.mark_notification_read(n.get("id"))
+                continue
+            target = posts[0]
+            pid = target.get("id")
+            if not pid:
+                moltbook.mark_notification_read(n.get("id"))
+                continue
+            if moltbook.my_comments_on(pid):
+                moltbook.mark_notification_read(n.get("id"))
+                continue
+            post_text = (target.get("content") or "") or (target.get("title") or "")
+            greeting = _gen_follower_greeting(follower_name, post_text)
+            if not greeting:
+                moltbook.mark_notification_read(n.get("id"))
+                continue
+            ok, _ = moltbook.comment_on_post(pid, greeting[:500])
+            moltbook.mark_notification_read(n.get("id"))
+            if ok:
+                handled += 1
+                print(f"=== MOLTBOOK GREETED follower {follower_name} on post {pid} ===", flush=True)
+    except Exception:
+        print("=== MOLTBOOK FOLLOWER GREETING ERROR ===", flush=True)
+        traceback.print_exc()
+
+
 def moltbook_heartbeat_loop():
     """Registered agent checks in and posts periodically to Moltbook."""
     while True:
@@ -336,6 +415,7 @@ def moltbook_heartbeat_loop():
                 _moltbook_post_update()
                 _moltbook_social_activity()
                 _moltbook_reply_to_mentions()
+                _moltbook_greet_followers()
                 moltbook.notify_on_update(bot, reminders._active_chat_ids())
         except Exception:
             print("=== MOLTBOOK HEARTBEAT ERROR ===", flush=True)
@@ -583,37 +663,19 @@ def profile_command(message):
 
     if len(args) > 1:
 
-        text = args[1]
+        parsed = memory.parse_profile(args[1])
 
-        for key in ("навыки", "скилы", "skills"):
+        if parsed.get("skills"):
+            memory.set_skills(user_id, parsed["skills"])
 
-            if re.search(rf"{key}\s*:", text, re.IGNORECASE):
+        if parsed.get("city"):
+            memory.set_city(user_id, parsed["city"])
 
-                val = re.split(rf"{key}\s*:", text, 1, re.IGNORECASE)[1]
-                val = re.split(r":", val, 1)[0].strip(" ,;")
+        if parsed.get("budget_euro"):
+            memory.set_budget(user_id, parsed["budget_euro"])
 
-                if val:
-                    memory.set_skills(user_id, val)
-
-        for key in ("город", "городе", "city"):
-
-            if re.search(rf"{key}\s*:", text, re.IGNORECASE):
-
-                val = re.split(rf"{key}\s*:", text, 1, re.IGNORECASE)[1]
-                val = re.split(r":", val, 1)[0].strip(" ,;")
-
-                if val:
-                    memory.set_city(user_id, val)
-
-        budget = re.search(r"бюджет\s*:\s*(\d[\d ]*)", text, re.IGNORECASE)
-
-        if budget:
-            memory.set_budget(user_id, int(budget.group(1).replace(" ", "")))
-
-        goal = re.search(r"цель\s*:\s*(\d[\d ]*)", text, re.IGNORECASE)
-
-        if goal:
-            memory.set_goal(user_id, int(goal.group(1).replace(" ", "")))
+        if parsed.get("goal_euro"):
+            memory.set_goal(user_id, parsed["goal_euro"])
 
         bot.send_message(
             message.chat.id,

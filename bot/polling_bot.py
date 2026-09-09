@@ -129,28 +129,15 @@ def profile_command(message):
     memory.ensure_user(message)
     args = message.text.split(maxsplit=1)
     if len(args) > 1:
-        text = args[1]
-        for key in ("навыки", "скилы", "skills"):
-            if re.search(rf"{key}\s*:", text, re.IGNORECASE):
-                val = re.split(rf"{key}\s*:", text, 1, re.IGNORECASE)[1]
-                val = re.split(r":", val, 1)[0].strip(" ,;")
-                if val:
-                    memory.set_skills(user_id, val)
-                    text = re.sub(rf"{key}\s*:{val}", "", text, flags=re.IGNORECASE)
-        for key in ("город", "городе", "city"):
-            if re.search(rf"{key}\s*:", text, re.IGNORECASE):
-                val = re.split(rf"{key}\s*:", text, 1, re.IGNORECASE)[1]
-                val = re.split(r":", val, 1)[0].strip(" ,;")
-                if val:
-                    memory.set_city(user_id, val)
-        budget = re.search(r"бюджет\s*:\s*(\d[\d ]*)", text, re.IGNORECASE)
-        if budget:
-            amount = int(budget.group(1).replace(" ", ""))
-            memory.set_budget(user_id, amount)
-        goal = re.search(r"цель\s*:\s*(\d[\d ]*)", text, re.IGNORECASE)
-        if goal:
-            amount = int(goal.group(1).replace(" ", ""))
-            memory.set_goal(user_id, amount)
+        parsed = memory.parse_profile(args[1])
+        if parsed.get("skills"):
+            memory.set_skills(user_id, parsed["skills"])
+        if parsed.get("city"):
+            memory.set_city(user_id, parsed["city"])
+        if parsed.get("budget_euro"):
+            memory.set_budget(user_id, parsed["budget_euro"])
+        if parsed.get("goal_euro"):
+            memory.set_goal(user_id, parsed["goal_euro"])
         bot.send_message(
             message.chat.id,
             "✅ Профиль обновлён.\n\n" + memory.format_profile(user_id),
