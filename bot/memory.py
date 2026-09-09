@@ -28,6 +28,18 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 
 CREATE INDEX IF NOT EXISTS idx_messages_user ON messages(user_id, created_at);
+
+CREATE TABLE IF NOT EXISTS analyses (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL,
+    idea       TEXT NOT NULL,
+    summary    TEXT NOT NULL,
+    detail     TEXT NOT NULL,
+    verdict    TEXT,
+    created_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_analyses_user ON analyses(user_id, created_at);
 """
 
 
@@ -222,6 +234,139 @@ def clear_history(user_id):
     conn.execute("DELETE FROM messages WHERE user_id = ?", (user_id,))
     conn.commit()
     conn.close()
+
+
+MAX_STORED_ANALYSES = 200
+
+_ANALYSIS_MARKERS = (
+    "вердикт", "вывод", "окупаемость", "маржа", "прибыль",
+    "ежемесяч", "риски", "план", "продаж",
+)
+_STOPWORDS = {
+    "и", "в", "во", "не", "что", "чтобы", "как", "для", "на", "с", "со",
+    "по", "это", "этот", "за", "из", "от", "ли", "а", "но", "то", "если",
+    "надо", "можно", "стоит", "хочу", "буду", "будет", "есть", "у", "при",
+    "к", "о", "об", "до", "же", "или", "только", "еще", "ещё", "так",
+    "просто", "нужно", "более", "цена", "цены", "стоимость",
+}
+
+
+def _is_analysis(answer):
+    low = answer.lower()
+    return any(m in low for m in _ANALYSIS_MARKERS)
+
+
+def _extract_verdict(answer):
+    """Try to grab the verdict line from an analysis answer."""
+    low = answer.lower()
+    for marker in ("мой вывод", "вердикт", "рекомендация", "вывод"):
+        idx = low.find(marker)
+        if idx == -1:
+            continue
+        line = answer[idx:idx + 240].split("\n", 1)[0].strip()
+        return line[:200]
+    first = next((l.strip() for l in answer.split("\n") if l.strip()), "")
+    return first[:200]
+
+
+def maybe_save_analysis(user_id, idea, answer):
+    """Store a business analysis so it can be reused in future answers.
+
+    Only saves when the assistant's reply looks like a real analysis
+    (contains verdict / margin / profit markers), keeping the knowledge
+    base clean of chit-chat.
+    """
+    if not idea or not answer or not _is_analysis(answer):
+        return None
+    conn = _conn()
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO analyses "
+        "(user_id, idea, summary, detail, verdict, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (
+            user_id,
+            idea[:300],
+            idea[:120],
+            answer[:4000],
+            _extract_verdict(answer),
+            int(time.time()),
+        ),
+    )
+    cur.execute(
+        "DELETE FROM analyses WHERE user_id = ? AND id NOT IN "
+        "(SELECT id FROM analyses WHERE user_id = ? "
+        " ORDER BY created_at DESC LIMIT ?)",
+        (user_id, user_id, MAX_STORED_ANALYSES),
+    )
+    conn.commit()
+    conn.close()
+    return True
+
+
+def _keywords(text):
+    words = set()
+    for token in text.lower().split():
+        token = re.sub(r"[^\w\u0400-\u04FF]", "", token)
+        if len(token) >= 4 and token not in _STOPWORDS:
+            words.add(token)
+    return words
+
+
+def remember_ideas(user_id, query, limit=3):
+    """Find past analyses relevant to the current query.
+
+    Matches on morphological stems (first 4 letters) of query keywords
+    against stored idea/summary text, newest first. Falls back to the
+    most recent analyses when nothing relevant is found.
+    """
+    conn = _conn()
+    keywords = _keywords(query)
+    rows = []
+    if keywords:
+        stems = {kw[:4] for kw in keywords if len(kw) >= 4}
+        if stems:
+            conds = []
+            params = [user_id]
+            for stem in stems:
+                conds.append("(idea LIKE ? OR summary LIKE ?)")
+                params.extend([f"%{stem}%", f"%{stem}%"])
+            params.append(limit)
+            rows = conn.execute(
+                "SELECT summary, verdict, detail, created_at FROM analyses "
+                "WHERE user_id = ? AND (" + " OR ".join(conds) + ") "
+                "ORDER BY created_at DESC LIMIT ?",
+                params,
+            ).fetchall()
+    if not rows:
+        rows = conn.execute(
+            "SELECT summary, verdict, detail, created_at FROM analyses "
+            "WHERE user_id = ? ORDER BY created_at DESC LIMIT ?",
+            (user_id, limit),
+        ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def format_prior_ideas(rows):
+    """Render remembered analyses as extra context for the system prompt."""
+    if not rows:
+        return ""
+    parts = []
+    for r in rows:
+        summary = (r.get("summary") or "").strip() or "идея"
+        verdict = (r.get("verdict") or "").strip()
+        detail = (r.get("detail") or "").replace("\n", " ").strip()
+        line = f"• Идея: {summary}"
+        if verdict:
+            line += f". Оценка: {verdict}"
+        if detail:
+            line += f"\n  Разбор: {detail[:500]}"
+        parts.append(line)
+    return (
+        "РАНЕЕ ТЫ УЖЕ РАЗБИРАЛ ПОХОЖИЕ ИДЕИ (используй этот опыт, "
+        "но не повторяй дословно):\n" + "\n".join(parts) + "\n"
+    )
 
 
 def progress_line(user_id):

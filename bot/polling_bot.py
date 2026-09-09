@@ -246,11 +246,16 @@ def handle_message(message):
 
     memory.append_message(user_id, "user", user_text)
 
+    prior = memory.format_prior_ideas(
+        memory.remember_ideas(user_id, user_text)
+    )
+
     history = memory.get_history(user_id, MAX_HISTORY)
 
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT.format(
-            profile=memory.profile_blurb(user_id)
+            profile=memory.profile_blurb(user_id),
+            prior=prior,
         )}
     ]
     messages.extend(history)
@@ -266,6 +271,7 @@ def handle_message(message):
             answer = "Не удалось получить ответ. Попробуй ещё раз."
 
         memory.append_message(user_id, "assistant", answer)
+        memory.maybe_save_analysis(user_id, user_text, answer)
 
         max_length = 4000
         for i in range(0, len(answer), max_length):
