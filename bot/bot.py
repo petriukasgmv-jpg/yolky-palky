@@ -462,8 +462,6 @@ WEBHOOK_URL = (
 # MEMORY
 # =========================
 
-user_histories = {}
-
 MAX_HISTORY = 10
 
 
@@ -508,7 +506,7 @@ def telegram_webhook():
             print("=== DIRECT START HANDLER ===", flush=True)
 
             user_id = update.message.from_user.id
-            user_histories[user_id] = []
+            memory.clear_history(user_id)
 
             bot.send_message(
                 update.message.chat.id,
@@ -550,7 +548,7 @@ def start(message):
 
     memory.ensure_user(message)
 
-    user_histories[user_id] = []
+    memory.clear_history(user_id)
 
     bot.send_message(
         message.chat.id,
@@ -827,23 +825,9 @@ def handle_message(message):
     print("=== USER MESSAGE ===", flush=True)
     print(user_text, flush=True)
 
-    if user_id not in user_histories:
-        user_histories[user_id] = []
+    memory.append_message(user_id, "user", user_text)
 
-    history = user_histories[user_id]
-
-    history.append(
-        {
-            "role": "user",
-            "content": user_text
-        }
-    )
-
-    if len(history) > MAX_HISTORY:
-
-        history = history[-MAX_HISTORY:]
-
-        user_histories[user_id] = history
+    history = memory.get_history(user_id, MAX_HISTORY)
 
     messages = [
         {
@@ -884,12 +868,7 @@ def handle_message(message):
         print("=== ANSWER ===", flush=True)
         print(answer, flush=True)
 
-        history.append(
-            {
-                "role": "assistant",
-                "content": answer
-            }
-        )
+        memory.append_message(user_id, "assistant", answer)
 
         max_length = 4000
 

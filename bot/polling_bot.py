@@ -33,7 +33,6 @@ MODEL = "openai/gpt-oss-20b"
 bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
 client = Groq(api_key=GROQ_API_KEY)
 
-user_histories = {}
 MAX_HISTORY = 10
 
 _GOAL_PATTERN_AMOUNT = {x for x in range(0, 100000, 500)}
@@ -50,7 +49,7 @@ def _parse_amount(text):
 @bot.message_handler(commands=["start"])
 def start(message):
     memory.ensure_user(message)
-    user_histories[message.from_user.id] = []
+    memory.clear_history(message.from_user.id)
     bot.send_message(
         message.chat.id,
         "Привет! Я Ёлки-палки — твой ИИ-Бизнес-Стратег.\n\n"
@@ -86,7 +85,7 @@ def help_command(message):
 
 @bot.message_handler(commands=["clear"])
 def clear_command(message):
-    user_histories.pop(message.from_user.id, None)
+    memory.clear_history(message.from_user.id)
     bot.send_message(message.chat.id, "История очищена.")
 
 
@@ -245,16 +244,9 @@ def handle_message(message):
     if not user_text:
         return
 
-    if user_id not in user_histories:
-        user_histories[user_id] = []
+    memory.append_message(user_id, "user", user_text)
 
-    history = user_histories[user_id]
-
-    history.append({"role": "user", "content": user_text})
-
-    if len(history) > MAX_HISTORY:
-        history = history[-MAX_HISTORY:]
-        user_histories[user_id] = history
+    history = memory.get_history(user_id, MAX_HISTORY)
 
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT.format(
@@ -273,7 +265,7 @@ def handle_message(message):
         if not answer:
             answer = "Не удалось получить ответ. Попробуй ещё раз."
 
-        history.append({"role": "assistant", "content": answer})
+        memory.append_message(user_id, "assistant", answer)
 
         max_length = 4000
         for i in range(0, len(answer), max_length):

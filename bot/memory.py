@@ -19,13 +19,22 @@ CREATE TABLE IF NOT EXISTS users (
     created_at   INTEGER,
     updated_at   INTEGER
 );
+
+CREATE TABLE IF NOT EXISTS messages (
+    user_id    INTEGER NOT NULL,
+    role       TEXT NOT NULL,
+    content    TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_messages_user ON messages(user_id, created_at);
 """
 
 
 def _conn():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
-    conn.execute(_SCHEMA)
+    conn.executescript(_SCHEMA)
     return conn
 
 
@@ -172,6 +181,47 @@ def format_profile(user_id):
     if u.get("about"):
         lines.append(f"📝 О себе: {u['about']}")
     return "Профиль:\n" + "\n".join(lines)
+
+
+MAX_STORED_MESSAGES = 100
+
+
+def append_message(user_id, role, content):
+    """Persist one message. Old messages are pruned to keep the DB bounded."""
+    conn = _conn()
+    conn.execute(
+        "INSERT INTO messages (user_id, role, content, created_at) "
+        "VALUES (?, ?, ?, ?)",
+        (user_id, role, content, int(time.time())),
+    )
+    conn.execute(
+        "DELETE FROM messages WHERE user_id = ? AND rowid NOT IN "
+        "(SELECT rowid FROM messages WHERE user_id = ? "
+        " ORDER BY rowid DESC LIMIT ?)",
+        (user_id, user_id, MAX_STORED_MESSAGES),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_history(user_id, limit=10):
+    """Last N messages for a user, oldest first (for the LLM context)."""
+    conn = _conn()
+    rows = conn.execute(
+        "SELECT role, content FROM messages "
+        "WHERE user_id = ? ORDER BY rowid ASC",
+        (user_id,),
+    ).fetchall()
+    conn.close()
+    history = [{"role": r["role"], "content": r["content"]} for r in rows]
+    return history[-limit:]
+
+
+def clear_history(user_id):
+    conn = _conn()
+    conn.execute("DELETE FROM messages WHERE user_id = ?", (user_id,))
+    conn.commit()
+    conn.close()
 
 
 def progress_line(user_id):
