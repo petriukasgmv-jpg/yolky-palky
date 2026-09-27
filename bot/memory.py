@@ -3,12 +3,18 @@ import re
 import sqlite3
 import time
 
-DATA_DIR = os.getenv("BOT_DATA_DIR", "").strip()
-if DATA_DIR:
-    os.makedirs(DATA_DIR, exist_ok=True)
-else:
-    DATA_DIR = os.path.dirname(__file__)
+DEFAULT_DATA_DIR = os.path.dirname(__file__)
+configured_data_dir = os.getenv("BOT_DATA_DIR", "").strip()
+render_data_dir = "/var/data"
 
+if configured_data_dir:
+    DATA_DIR = configured_data_dir
+elif os.path.isdir(render_data_dir) and os.access(render_data_dir, os.W_OK):
+    DATA_DIR = render_data_dir
+else:
+    DATA_DIR = DEFAULT_DATA_DIR
+
+os.makedirs(DATA_DIR, exist_ok=True)
 DB_PATH = os.path.join(DATA_DIR, "userstate.db")
 
 _SCHEMA = """
