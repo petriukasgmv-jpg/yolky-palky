@@ -38,7 +38,11 @@ if not TELEGRAM_BOT_TOKEN:
 if not GROQ_API_KEY:
     raise RuntimeError("GROQ_API_KEY is not set")
 
-MODEL = "openai/gpt-oss-20b"
+# The larger model is the default for better reasoning. Render can override
+# it with GROQ_MODEL without another code change; the 20B model remains a
+# practical fallback when the free quota is exhausted.
+MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+MODEL_FALLBACK = os.getenv("GROQ_MODEL_FALLBACK", "openai/gpt-oss-20b")
 
 client = Groq(api_key=GROQ_API_KEY)
 
@@ -99,7 +103,10 @@ def _mark_update_seen(update_id):
 # MOLTBOOK SETTINGS
 # =========================
 
-MOLTBOOK_ENABLED = os.getenv("MOLTBOOK_ENABLED", "1") == "1"
+# Moltbook is an optional promotion channel, not part of the agent's core
+# reasoning. Keep it opt-in so background activity cannot consume quota or
+# publish low-quality content without an explicit decision.
+MOLTBOOK_ENABLED = os.getenv("MOLTBOOK_ENABLED", "0") == "1"
 MOLTBOOK_AGENT_NAME = os.getenv("MOLTBOOK_AGENT_NAME", "yolky-palky-biz")
 MOLTBOOK_CHECK_INTERVAL = int(os.getenv("MOLTBOOK_CHECK_INTERVAL", "1800"))
 MOLTBOOK_POST_INTERVAL = int(os.getenv("MOLTBOOK_POST_INTERVAL", "14400"))
