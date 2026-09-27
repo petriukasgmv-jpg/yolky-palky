@@ -65,15 +65,16 @@ def calculate(
 
     fee_amount = price * fee / 100.0
     advertising_amount = advertising
-    tax_amount = price * tax / 100.0
-    unit_profit = (
+    pre_tax_profit = (
         price
         - cost
         - fee_amount
         - shipping
         - advertising_amount
-        - tax_amount
     )
+    # Income tax is charged on positive profit, not on revenue.
+    tax_amount = max(0.0, pre_tax_profit * tax / 100.0)
+    unit_profit = pre_tax_profit - tax_amount
     margin = unit_profit / price * 100
     monthly_profit = unit_profit * sales if sales else None
     sales_to_goal = math.ceil(goal / unit_profit) if unit_profit > 0 else None
@@ -96,6 +97,7 @@ def calculate(
         "advertising": advertising_amount,
         "tax": tax,
         "tax_amount": tax_amount,
+        "pre_tax_profit": pre_tax_profit,
         "unit_profit": unit_profit,
         "margin": margin,
         "goal": goal,
@@ -131,6 +133,7 @@ def render_calc(result):
         )
     lines += [
         "──────────────────────",
+        f"📊 Прибыль до налога:   {format_euro(result['pre_tax_profit'])}",
         f"✅ Денежная прибыль:    {format_euro(result['unit_profit'])}",
         f"📈 Маржа:               {result['margin']:.1f}%",
     ]
@@ -156,6 +159,11 @@ def render_calc(result):
             f"🎯 Цель €{goal:,.0f} чистыми/мес",
             f"👀 Нужно продаж в месяц: {result['sales_to_goal']}",
         ]
+        if result["hours"]:
+            goal_hours = result["hours"] * result["sales_to_goal"]
+            lines.append(f"⏱ Часов для цели:       {goal_hours:.1f} ч/мес")
+            if goal_hours > 160:
+                lines.append("🔴 Цель недостижима одному человеку при таком времени на заказ.")
     else:
         lines.append("🔴 Денежная прибыль с продажи ≤ 0 — цена ниже расходов.")
 
