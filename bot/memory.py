@@ -157,13 +157,13 @@ def parse_natural_memory_intent(text):
     """
     if not isinstance(text, str):
         return None
-    normalized = re.sub(r"\\s+", " ", text.lower()).strip()
+    normalized = re.sub(r"\s+", " ", text.lower()).strip()
     if not normalized:
         return None
 
     save = any(word in normalized for word in ("запомни", "сохрани", "записать"))
     ask = any(word in normalized for word in ("какой", "сколько", "что за", "узнать"))
-    number = re.search(r"(?<!\\d)(\\d[\\d ]*)(?:[.,]\\d+)?", normalized)
+    number = re.search(r"(?<!\d)(\d[\d ]*)(?:[.,]\d+)?", normalized)
 
     if "бюджет" in normalized:
         if save and number:
