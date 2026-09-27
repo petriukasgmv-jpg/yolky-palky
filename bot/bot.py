@@ -1095,3 +1095,15 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=port
     )
+from bot_prompt import SYSTEM_PROMPT
+
+# Внутри функции обработки сообщений перед отправкой в Groq / OpenAI:
+formatted_prompt = SYSTEM_PROMPT.format(
+    profile=user_profile if 'user_profile' in locals() else "",
+    context=user_context if 'user_context' in locals() else ""
+)
+
+messages = [
+    {"role": "system", "content": formatted_prompt},
+    {"role": "user", "content": user_message}
+]
