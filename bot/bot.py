@@ -1096,5 +1096,8 @@ if __name__ == "__main__":
         flush=True
     )
 
-    print(
-        "Starting Yolky P
+    
+print(
+    "Starting Yolky Palky webhook bot...",
+    flush=True
+)
