@@ -11,7 +11,8 @@ from dotenv import load_dotenv
 from flask import Flask, jsonify, request
 from groq import Groq
 import telebot
-from telebot import types
+from bot import groq_utils
+
 
 import calc
 import groq_utils
