@@ -592,6 +592,11 @@ def clean_telegram_text(text):
 
     text = re.sub(r"<br\s*/?>", "\n", text, flags=re.IGNORECASE)
     text = text.replace("**", "").replace("__", "")
+    # Models sometimes emit internal citation markers copied from a search
+    # tool. They are not usable links in Telegram and must never be shown as
+    # if they were real sources.
+    text = re.sub(r"【[^】]{1,80}】", "", text)
+    text = re.sub(r"\[[0-9]+†L[0-9]+(?:-L?[0-9]+)?\]", "", text)
     text = re.sub(r"^\s*#{1,6}\s*", "", text, flags=re.MULTILINE)
     text = text.replace("```", "")
 
