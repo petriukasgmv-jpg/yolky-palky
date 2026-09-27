@@ -3,3 +3,4 @@ groq
 python-dotenv
 duckduckgo_search>=6.0.0
 flask
+gunicorn
