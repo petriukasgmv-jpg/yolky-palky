@@ -83,6 +83,14 @@ UPDATE_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="telegram
 _processed_update_ids = set()
 _processed_update_order = deque(maxlen=2000)
 _processed_update_lock = threading.Lock()
+_user_processing_locks = {}
+_user_processing_locks_guard = threading.Lock()
+
+
+def _get_user_processing_lock(user_id):
+    """Serialize updates from one user while keeping users concurrent."""
+    with _user_processing_locks_guard:
+        return _user_processing_locks.setdefault(user_id, threading.Lock())
 
 
 def _mark_update_seen(update_id):
@@ -796,7 +804,15 @@ def telegram_webhook():
 
 def _process_update(update):
     """Process a Telegram update after the webhook has been acknowledged."""
+    user_id = (
+        update.message.from_user.id
+        if update.message and update.message.from_user
+        else None
+    )
+    lock = _get_user_processing_lock(user_id) if user_id is not None else None
     try:
+        if lock is not None:
+            lock.acquire()
         if update.message and update.message.text == "/start":
             user_id = update.message.from_user.id
             memory.ensure_user(update.message)
@@ -814,6 +830,9 @@ def _process_update(update):
     except Exception:
         print("=== UPDATE PROCESSING ERROR ===", flush=True)
         traceback.print_exc()
+    finally:
+        if lock is not None and lock.locked():
+            lock.release()
 
 
 # =========================
