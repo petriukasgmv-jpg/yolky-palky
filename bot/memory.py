@@ -3,7 +3,13 @@ import re
 import sqlite3
 import time
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "userstate.db")
+DATA_DIR = os.getenv("BOT_DATA_DIR", "").strip()
+if DATA_DIR:
+    os.makedirs(DATA_DIR, exist_ok=True)
+else:
+    DATA_DIR = os.path.dirname(__file__)
+
+DB_PATH = os.path.join(DATA_DIR, "userstate.db")
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (

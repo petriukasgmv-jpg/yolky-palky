@@ -749,6 +749,8 @@ def health():
         "model": MODEL,
         "fallback_model": MODEL_FALLBACK,
         "missing_environment": missing,
+        "memory_path": memory.DB_PATH,
+        "memory_external_dir": bool(os.getenv("BOT_DATA_DIR", "").strip()),
     }
     return jsonify(payload), (200 if not missing else 503)
 
