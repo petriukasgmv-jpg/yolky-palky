@@ -1163,6 +1163,37 @@ def handle_message(message):
 
     print(f"=== USER MESSAGE from {user_id} ===", flush=True)
 
+    # Deterministic memory intents must never be delegated to the LLM.
+    # This is a second guard in addition to the Telegram handler above.
+    normalized = re.sub(r"\\s+", " ", user_text.lower()).strip()
+    if (
+        "бюджет" in normalized
+        and (
+            "мой" in normalized
+            or "у меня" in normalized
+            or "запомни" in normalized
+            or "сохрани" in normalized
+        )
+        and any(word in normalized for word in ("какой", "сколько", "запомни", "сохрани"))
+    ):
+        user = memory.get_user(user_id)
+        if any(word in normalized for word in ("запомни", "сохрани")):
+            amount = _parse_amount(normalized)
+            if amount and amount > 0:
+                memory.set_budget(user_id, amount)
+                bot.send_message(message.chat.id, f"✅ Бюджет сохранён: €{amount:,}.")
+                return
+        budget = (user or {}).get("budget_euro")
+        if budget:
+            bot.send_message(message.chat.id, f"💰 Твой сохранённый бюджет: €{budget:,}.")
+        else:
+            bot.send_message(
+                message.chat.id,
+                "💰 Бюджет пока не сохранён. Напиши: «запомни мой бюджет 500 евро» "
+                "или используй /profile бюджет: 500",
+            )
+        return
+
     memory.append_message(user_id, "user", user_text)
 
     context = (
