@@ -1336,6 +1336,25 @@ def handle_message(message):
 # START SERVER
 # =========================
 
+def configure_webhook():
+    """Register Telegram webhook for both direct and WSGI startup."""
+    if not TELEGRAM_WEBHOOK_SECRET:
+        raise RuntimeError(
+            "TELEGRAM_WEBHOOK_SECRET is required for a secure webhook"
+        )
+    return bot.set_webhook(
+        url=WEBHOOK_URL,
+        secret_token=TELEGRAM_WEBHOOK_SECRET,
+    )
+
+
+try:
+    print("Webhook set:", configure_webhook(), flush=True)
+except Exception as e:
+    print("Webhook setup error:", repr(e), flush=True)
+    traceback.print_exc()
+
+
 if __name__ == "__main__":
 
     print(
@@ -1358,34 +1377,6 @@ if __name__ == "__main__":
         "===================================",
         flush=True
     )
-
-    try:
-
-        if not TELEGRAM_WEBHOOK_SECRET:
-            raise RuntimeError(
-                "TELEGRAM_WEBHOOK_SECRET is required for a secure webhook"
-            )
-
-        result = bot.set_webhook(
-            url=WEBHOOK_URL,
-            secret_token=TELEGRAM_WEBHOOK_SECRET,
-        )
-
-        print(
-            "Webhook set:",
-            result,
-            flush=True
-        )
-
-    except Exception as e:
-
-        print(
-            "Webhook setup error:",
-            repr(e),
-            flush=True
-        )
-
-        traceback.print_exc()
 
     port = int(
         os.getenv(
