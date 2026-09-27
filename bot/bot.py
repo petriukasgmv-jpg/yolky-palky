@@ -1196,35 +1196,43 @@ def handle_message(message):
     memory.ensure_user(message)
 
     # Deterministic memory intents must never be delegated to the LLM.
-    # This is a second guard in addition to the Telegram handler above.
-    normalized = re.sub(r"\s+", " ", user_text.lower()).strip()
-    if (
-        "бюджет" in normalized
-        and (
-            "мой" in normalized
-            or "у меня" in normalized
-            or "запомни" in normalized
-            or "сохрани" in normalized
-        )
-        and any(word in normalized for word in ("какой", "сколько", "запомни", "сохрани"))
-    ):
+    # This fallback also protects us if handler registration changes.
+    intent = memory.parse_natural_memory_intent(user_text)
+    if intent:
+        action, value = intent
         user = memory.get_user(user_id)
-        if any(word in normalized for word in ("запомни", "сохрани")):
-            amount = _parse_amount(normalized)
-            if amount and amount > 0:
-                memory.set_budget(user_id, amount)
-                bot.send_message(message.chat.id, f"✅ Бюджет сохранён: €{amount:,}.")
-                return
-        budget = (user or {}).get("budget_euro")
-        if budget:
-            bot.send_message(message.chat.id, f"💰 Твой сохранённый бюджет: €{budget:,}.")
-        else:
+        if action == "set_budget":
+            if value <= 0:
+                bot.send_message(message.chat.id, "Бюджет должен быть больше нуля.")
+            else:
+                memory.set_budget(user_id, value)
+                bot.send_message(message.chat.id, f"✅ Бюджет сохранён: €{value:,}.")
+            return
+        if action == "get_budget":
+            budget = (user or {}).get("budget_euro")
             bot.send_message(
                 message.chat.id,
-                "💰 Бюджет пока не сохранён. Напиши: «запомни мой бюджет 500 евро» "
-                "или используй /profile бюджет: 500",
+                f"💰 Твой сохранённый бюджет: €{budget:,}."
+                if budget
+                else "💰 Бюджет пока не сохранён. Напиши: «запомни мой бюджет 500 евро».",
             )
-        return
+            return
+        if action == "set_goal":
+            if value <= 0:
+                bot.send_message(message.chat.id, "Цель должна быть больше нуля.")
+            else:
+                memory.set_goal(user_id, value)
+                bot.send_message(message.chat.id, f"✅ Цель сохранена: €{value:,} чистыми/мес.")
+            return
+        if action == "get_goal":
+            goal = (user or {}).get("goal_euro")
+            bot.send_message(
+                message.chat.id,
+                f"🎯 Твоя сохранённая цель: €{goal:,} чистыми/мес."
+                if goal
+                else "🎯 Цель пока не сохранена. Напиши: «запомни цель 5000».",
+            )
+            return
 
     memory.append_message(user_id, "user", user_text)
 
