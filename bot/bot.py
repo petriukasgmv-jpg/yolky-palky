@@ -977,6 +977,30 @@ def status_command(message):
     bot.send_message(message.chat.id, memory.progress_line(user_id))
 
 
+@bot.message_handler(func=lambda message: bool(
+    message.text
+    and re.search(
+        r"(?i)\\b(какой|сколько|что за)\\b.*\\b(мой|у меня)\\b.*\\bбюджет\\b"
+        r"|\\b(мой|у меня)\\b.*\\bбюджет\\b",
+        message.text,
+    )
+))
+def remembered_budget_command(message):
+    """Answer budget questions from durable profile memory, without the LLM."""
+    user_id = message.from_user.id
+    memory.ensure_user(message)
+    user = memory.get_user(user_id)
+    budget = (user or {}).get("budget_euro")
+    if budget:
+        bot.send_message(message.chat.id, f"💰 Твой сохранённый бюджет: €{budget:,}.")
+    else:
+        bot.send_message(
+            message.chat.id,
+            "💰 Бюджет пока не сохранён. Напиши: «запомни мой бюджет 500 евро» "
+            "или используй /profile бюджет: 500",
+        )
+
+
 @bot.message_handler(commands=["calc"])
 def calc_command(message):
 
