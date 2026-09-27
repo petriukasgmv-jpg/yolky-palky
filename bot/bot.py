@@ -980,8 +980,8 @@ def status_command(message):
 @bot.message_handler(func=lambda message: bool(
     message.text
     and re.search(
-        r"(?i)\\b(какой|сколько|что за)\\b.*\\b(мой|у меня)\\b.*\\bбюджет\\b"
-        r"|\\b(мой|у меня)\\b.*\\bбюджет\\b",
+        r"(?i)\b(какой|сколько|что за)\b.*\b(мой|у меня)\b.*\bбюджет\b"
+        r"|\b(мой|у меня)\b.*\bбюджет\b",
         message.text,
     )
 ))
