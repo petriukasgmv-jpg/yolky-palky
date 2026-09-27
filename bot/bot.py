@@ -751,6 +751,8 @@ def health():
         "missing_environment": missing,
         "memory_path": memory.DB_PATH,
         "memory_external_dir": memory.DATA_DIR != memory.DEFAULT_DATA_DIR,
+        "memory_writable": os.access(memory.DATA_DIR, os.W_OK),
+        "version": os.getenv("RENDER_GIT_COMMIT", "unknown"),
     }
     return jsonify(payload), (200 if not missing else 503)
 
