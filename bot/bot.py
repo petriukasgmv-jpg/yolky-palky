@@ -1165,7 +1165,7 @@ def handle_message(message):
 
     # Deterministic memory intents must never be delegated to the LLM.
     # This is a second guard in addition to the Telegram handler above.
-    normalized = re.sub(r"\\s+", " ", user_text.lower()).strip()
+    normalized = re.sub(r"\s+", " ", user_text.lower()).strip()
     if (
         "бюджет" in normalized
         and (
