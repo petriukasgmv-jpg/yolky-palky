@@ -125,7 +125,7 @@ def _solve_moltbook_challenge(challenge_text):
         return None
     try:
         completion = client.chat.completions.create(
-            model=MODEL,
+            model=os.getenv("GROQ_AUDIT_MODEL", "openai/gpt-oss-20b"),
             messages=[
                 {
                     "role": "system",
