@@ -54,7 +54,13 @@ def calculate(
     against the 160-hour monthly capacity when ``hours`` is provided.
     """
     values = (price, cost, sales, fee, shipping, goal, advertising, tax, hours)
-    if any(value < 0 for value in values) or price <= 0 or sales < 0:
+    if (
+        any(value < 0 for value in values)
+        or price <= 0
+        or sales < 0
+        or fee > 100
+        or tax > 100
+    ):
         return None
 
     fee_amount = price * fee / 100.0
@@ -72,6 +78,14 @@ def calculate(
     monthly_profit = unit_profit * sales if sales else None
     sales_to_goal = math.ceil(goal / unit_profit) if unit_profit > 0 else None
     total_hours = hours * sales if hours and sales else 0
+
+    warnings = []
+    if unit_profit <= 0:
+        warnings.append("Цена не покрывает денежные расходы.")
+    if total_hours > 160:
+        warnings.append("Нагрузка превышает 160 часов в месяц.")
+    if hours and sales > 20:
+        warnings.append("Больше 20 ручных заказов в месяц на одного человека.")
 
     return {
         "price": price,
@@ -91,6 +105,8 @@ def calculate(
         "total_hours": total_hours,
         "hours_violation": total_hours > 160,
         "manual_orders_violation": bool(hours and sales > 20),
+        "warnings": warnings,
+        "feasible": not warnings,
     }
 
 
