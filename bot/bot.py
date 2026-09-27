@@ -552,6 +552,30 @@ WEBHOOK_URL = (
 MAX_HISTORY = 10
 
 
+def clean_telegram_text(text):
+    """Convert common model formatting to readable plain Telegram text."""
+    if not text:
+        return ""
+
+    text = re.sub(r"<br\s*/?>", "\n", text, flags=re.IGNORECASE)
+    text = text.replace("**", "").replace("__", "")
+    text = re.sub(r"^\s*#{1,6}\s*", "", text, flags=re.MULTILINE)
+    text = text.replace("```", "")
+
+    cleaned_lines = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        # Remove Markdown table separator rows such as |---|---|.
+        if stripped and re.fullmatch(r"\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?", stripped):
+            continue
+        if "|" in line:
+            line = line.replace("|", " — ")
+            line = re.sub(r"\s+—\s+", " — ", line).strip(" —")
+        cleaned_lines.append(line.rstrip())
+
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(cleaned_lines)).strip()
+
+
 # =========================
 # FLASK
 # =========================
@@ -1005,6 +1029,8 @@ def handle_message(message):
                 "Попробуй ещё раз."
             )
 
+        answer = clean_telegram_text(answer)
+
         print(f"=== ANSWER READY for {user_id} ({len(answer)} chars) ===", flush=True)
 
         memory.append_message(user_id, "assistant", answer)
@@ -1071,57 +1097,4 @@ if __name__ == "__main__":
     )
 
     print(
-        "Starting Yolky Palky webhook bot...",
-        flush=True
-    )
-
-    print(
-        "Webhook URL:",
-        WEBHOOK_URL,
-        flush=True
-    )
-
-    print(
-        "===================================",
-        flush=True
-    )
-
-    try:
-
-        if not TELEGRAM_WEBHOOK_SECRET:
-            raise RuntimeError(
-                "TELEGRAM_WEBHOOK_SECRET is required for a secure webhook"
-            )
-
-        result = bot.set_webhook(
-            url=WEBHOOK_URL,
-            secret_token=TELEGRAM_WEBHOOK_SECRET,
-        )
-
-        print(
-            "Webhook set:",
-            result,
-            flush=True
-        )
-
-    except Exception as e:
-
-        print(
-            "Webhook setup error:",
-            repr(e),
-            flush=True
-        )
-
-        traceback.print_exc()
-
-    port = int(
-        os.getenv(
-            "PORT",
-            "10000"
-        )
-    )
-
-    app.run(
-        host="0.0.0.0",
-        port=port
-    )
+        "Starting Yolky P
