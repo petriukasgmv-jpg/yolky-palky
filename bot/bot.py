@@ -1163,6 +1163,10 @@ def handle_message(message):
 
     print(f"=== USER MESSAGE from {user_id} ===", flush=True)
 
+    # Generic messages can arrive before /start; create the durable profile
+    # row before any memory write.
+    memory.ensure_user(message)
+
     # Deterministic memory intents must never be delegated to the LLM.
     # This is a second guard in addition to the Telegram handler above.
     normalized = re.sub(r"\s+", " ", user_text.lower()).strip()
