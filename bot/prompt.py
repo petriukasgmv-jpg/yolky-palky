@@ -56,15 +56,3 @@ SYSTEM_PROMPT = """
 
 КОРОЧЕ: меньше разговоров, больше РАСЧЁТОВ, ФАКТОВ, ПРОВЕРКИ, СРАВНЕНИЯ, РЕШЕНИЙ и КОНКРЕТНЫХ ДЕЙСТВИЙ. Задача — определить, МОЖНО ли реально заработать €5 000 чистыми в месяц, СКОЛЬКО для этого нужно продаж и КАК начать с минимальным риском.
 """
-from bot_prompt import SYSTEM_PROMPT
-
-# В месте вызова API (например, Groq):
-formatted_prompt = SYSTEM_PROMPT.format(
-    profile=user_profile if 'user_profile' in locals() else "",
-    context=user_context if 'user_context' in locals() else ""
-)
-
-messages = [
-    {"role": "system", "content": formatted_prompt},
-    {"role": "user", "content": user_message}
-]
