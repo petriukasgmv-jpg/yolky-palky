@@ -2,3 +2,5 @@ pyTelegramBotAPI
 groq
 python-dotenv
 flask
+duckduckgo_search
+gunicorn

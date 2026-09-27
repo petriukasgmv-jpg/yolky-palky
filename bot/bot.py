@@ -1,11 +1,14 @@
 import os
 import re
+import hmac
 import threading
 import time
 import traceback
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 
 from dotenv import load_dotenv
-from flask import Flask, request
+from flask import Flask, jsonify, request
 from groq import Groq
 import telebot
 from telebot import types
@@ -27,6 +30,7 @@ load_dotenv()
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET")
 
 if not TELEGRAM_BOT_TOKEN:
     raise RuntimeError("TELEGRAM_BOT_TOKEN is not set")
@@ -34,7 +38,11 @@ if not TELEGRAM_BOT_TOKEN:
 if not GROQ_API_KEY:
     raise RuntimeError("GROQ_API_KEY is not set")
 
-MODEL = "openai/gpt-oss-20b"
+# The larger model is the default for better reasoning. Render can override
+# it with GROQ_MODEL without another code change; the 20B model remains a
+# practical fallback when the free quota is exhausted.
+MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+MODEL_FALLBACK = os.getenv("GROQ_MODEL_FALLBACK", "openai/gpt-oss-20b")
 
 client = Groq(api_key=GROQ_API_KEY)
 
@@ -44,11 +52,69 @@ bot = telebot.TeleBot(
 )
 
 
+def _repair_mojibake(text):
+    """Repair Cyrillic text accidentally decoded as Windows-1252/Latin-1."""
+    if not isinstance(text, str) or not text:
+        return text
+    if not any(marker in text for marker in ("Р", "С", "Ð", "Ñ")):
+        return text
+    for encoding in ("cp1251", "cp1252", "latin1"):
+        try:
+            repaired = text.encode(encoding).decode("utf-8")
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            continue
+        if repaired != text and "�" not in repaired:
+            return repaired
+    return text
+
+
+_send_message = bot.send_message
+
+
+def _safe_send_message(chat_id, text, *args, **kwargs):
+    return _send_message(chat_id, _repair_mojibake(text), *args, **kwargs)
+
+
+bot.send_message = _safe_send_message
+
+# Acknowledge webhook requests immediately and process updates in the
+# background, so slow AI/search calls do not make Telegram retry updates.
+UPDATE_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="telegram-update")
+_processed_update_ids = set()
+_processed_update_order = deque(maxlen=2000)
+_processed_update_lock = threading.Lock()
+_user_processing_locks = {}
+_user_processing_locks_guard = threading.Lock()
+
+
+def _get_user_processing_lock(user_id):
+    """Serialize updates from one user while keeping users concurrent."""
+    with _user_processing_locks_guard:
+        return _user_processing_locks.setdefault(user_id, threading.Lock())
+
+
+def _mark_update_seen(update_id):
+    """Return False for a duplicate Telegram update, True for a new one."""
+    if update_id is None:
+        return True
+    with _processed_update_lock:
+        if update_id in _processed_update_ids:
+            return False
+        if len(_processed_update_order) == _processed_update_order.maxlen:
+            _processed_update_ids.discard(_processed_update_order[0])
+        _processed_update_order.append(update_id)
+        _processed_update_ids.add(update_id)
+        return True
+
+
 # =========================
 # MOLTBOOK SETTINGS
 # =========================
 
-MOLTBOOK_ENABLED = os.getenv("MOLTBOOK_ENABLED", "1") == "1"
+# Moltbook is an optional promotion channel, not part of the agent's core
+# reasoning. Keep it opt-in so background activity cannot consume quota or
+# publish low-quality content without an explicit decision.
+MOLTBOOK_ENABLED = os.getenv("MOLTBOOK_ENABLED", "0") == "1"
 MOLTBOOK_AGENT_NAME = os.getenv("MOLTBOOK_AGENT_NAME", "yolky-palky-biz")
 MOLTBOOK_CHECK_INTERVAL = int(os.getenv("MOLTBOOK_CHECK_INTERVAL", "1800"))
 MOLTBOOK_POST_INTERVAL = int(os.getenv("MOLTBOOK_POST_INTERVAL", "14400"))
@@ -67,7 +133,7 @@ def _solve_moltbook_challenge(challenge_text):
         return None
     try:
         completion = client.chat.completions.create(
-            model=MODEL,
+            model=os.getenv("GROQ_AUDIT_MODEL", "openai/gpt-oss-20b"),
             messages=[
                 {
                     "role": "system",
@@ -158,17 +224,7 @@ _last_moltbook_post_score = [None]
 
 
 def _pick_moltbook_topic():
-    """Pick a post topic, biased toward what performed well before."""
-    posts, err = moltbook.get_my_posts()
-    if not err and posts:
-        for p in posts:
-            score = (p.get("score") or 0) + (p.get("comment_count") or 0)
-            if score > 0:
-                # A topic landed: reuse/rotate the strongest theme.
-                prev = _last_moltbook_post_score[0]
-                _last_moltbook_post_score[0] = score
-                return _MOLTBOOK_TOPICS[0]
-    # Otherwise rotate through the list.
+    """Rotate topics predictably; post scores do not identify a topic."""
     idx = int(time.time() // MOLTBOOK_POST_INTERVAL) % len(_MOLTBOOK_TOPICS)
     return _MOLTBOOK_TOPICS[idx]
 
@@ -537,11 +593,149 @@ WEBHOOK_URL = (
 MAX_HISTORY = 10
 
 
+def clean_telegram_text(text):
+    """Convert common model formatting to readable plain Telegram text."""
+    if not text:
+        return ""
+
+    text = re.sub(r"<br\s*/?>", "\n", text, flags=re.IGNORECASE)
+    text = text.replace("**", "").replace("__", "")
+    # Models sometimes emit internal citation markers copied from a search
+    # tool. They are not usable links in Telegram and must never be shown as
+    # if they were real sources.
+    text = re.sub(r"【[^】]{1,80}】", "", text)
+    text = re.sub(r"\[[0-9]+†L[0-9]+(?:-L?[0-9]+)?\]", "", text)
+    text = re.sub(r"^\s*#{1,6}\s*", "", text, flags=re.MULTILINE)
+    text = text.replace("```", "")
+
+    cleaned_lines = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        # Remove Markdown table separator rows such as |---|---|.
+        if stripped and re.fullmatch(r"\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?", stripped):
+            continue
+        if "|" in line:
+            line = line.replace("|", " — ")
+            line = re.sub(r"\s+—\s+", " — ", line).strip(" —")
+        cleaned_lines.append(line.rstrip())
+
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(cleaned_lines)).strip()
+
+
+ANSWER_AUDIT_ENABLED = os.getenv("ANSWER_AUDIT_ENABLED", "1") == "1"
+
+
+def audit_business_answer(user_text, answer):
+    """Run a final factual/arithmetic audit before sending business advice."""
+    if not ANSWER_AUDIT_ENABLED or not answer or len(answer) > 14000:
+        return answer
+    try:
+        audit_messages = [
+                {
+                    "role": "system",
+                    "content": (
+                        "Ты — финальный аудитор бизнес-ответов. Верни только "
+                        "исправленный готовый ответ на русском. Пересчитай все "
+                        "суммы, расходы, налоги, VAT, CPC/CPL/CPA и часы. "
+                        "Если страна регистрации или налоговая форма не указаны, "
+                        "не угадывай страну и ставку: назови налог допущением и "
+                        "задай один вопрос. Не складывай VAT с налогом на прибыль. "
+                        "Для грантов сумма гранта не является выручкой консультанта: "
+                        "выручка = только гонорар или процент от гранта. Если указана "
+                        "вероятность успеха, доход считай от числа успешных заявок "
+                        "(количество заявок * процент успеха), а не от всех заявок. "
+                        "В грантовой воронке разделяй лид, платного клиента и "
+                        "одобренную заявку. Если гонорар платят только после одобрения, "
+                        "умножай клиентов на вероятность одобрения. CPL дели на "
+                        "конверсию лида в клиента точно, а округление помечай. "
+                        "Никогда не подставляй Германию или другую страну, если её "
+                        "не указал пользователь. "
+                        "Для юридических, финансовых, технологических и политических "
+                        "утверждений проверяй дату и юрисдикцию, отделяй факт от оценки, "
+                        "не выдумывай законы, ставки, должности, версии и источники. "
+                        "Если запрос о возможностях самого агента, не обещай гарантий "
+                        "и не утверждай, что поиск или проверка сработали, если это не "
+                        "подтверждено в текущем ответе. Не говори, что можешь найти "
+                        "любые актуальные факты; VAT и ставку труда не рассчитывай "
+                        "автоматически без страны, статуса и исходных данных. "
+                        "€3–€5 за лид называй только рабочим допущением, не минимумом. "
+                        "Если пользователь просит пересчитать пример из предыдущего "
+                        "сообщения и там есть числа, пересчитай именно этот пример, "
+                        "а не запрашивай новую страну или выбор бизнес-модели. "
+                        "Никогда не называй чистой прибылью сумму при неизвестном "
+                        "налоге. Ограничение 20 заказов относится только к ручной "
+                        "индивидуальной работе, а не автоматически к перепродаже. "
+                        "В вероятностной воронке используй N / p для нужного числа "
+                        "попыток и не смешивай заявки с успешными заказами. "
+                        "Не называй налогом процент от выручки без подтверждённого "
+                        "режима: сначала покажи прибыль до налога, а неизвестный "
+                        "налог вынеси в отдельный условный сценарий. "
+                        "Предыдущие ответы из истории считай черновиками: не копируй "
+                        "их ошибки и старые обещания. Последняя команда пользователя "
+                        "имеет приоритет и должна быть выполнена первой. "
+                        "На команду «продолжать» опирайся на уже известный контекст: "
+                        "сделай следующий конкретный шаг, а не общий шаблон с выбором "
+                        "варианта. Не обещай объёмы производства без расчёта часов. "
+                        "Если пользователь живёт в Литве и спрашивает о налогах, дай "
+                        "краткую карту GPM/PSD/VSD, налога на прибыль и VAT по форме "
+                        "деятельности, но без неподтверждённых ставок; используй "
+                        "individuali veikla, MB, UAB и PVM mokėtojas, не «DAAB». "
+                        "Для литовских налогов не принимай цифры из памяти: сверяй VMI "
+                        "и Sodra, учитывай год и условия. Не используй GM, MGMT, "
+                        "фиксированные взносы или порог PVM без источника. Разделяй "
+                        "оборот, налоговую базу, GPM/налог на прибыль, PSD, VSD и PVM. "
+                        "Не используй ссылки вида [1†L...] или 【...】 и не выдумывай "
+                        "источники. Если исходный ответ в целом верен, сохрани его "
+                        "содержание, исправив только ошибки."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        "Запрос пользователя:\n" + user_text[:5000]
+                        + "\n\nОтвет для проверки:\n" + answer[:14000]
+                    ),
+                },
+        ]
+        completion = None
+        for audit_model in dict.fromkeys((MODEL_FALLBACK, MODEL)):
+            try:
+                completion = client.chat.completions.create(
+                    model=audit_model,
+                    messages=audit_messages,
+                    reasoning_effort="low",
+                    include_reasoning=False,
+                    max_completion_tokens=2500,
+                )
+                break
+            except Exception:
+                traceback.print_exc()
+        if completion is None:
+            return answer
+        audited = (completion.choices[0].message.content or "").strip()
+        return audited or answer
+    except Exception:
+        traceback.print_exc()
+        return answer
+
+
 # =========================
 # FLASK
 # =========================
 
 app = Flask(__name__)
+
+
+def generate_business_answer(messages):
+    """Use the primary model and fall back automatically if quota/model fails."""
+    last_error = None
+    for model in dict.fromkeys((MODEL, MODEL_FALLBACK)):
+        try:
+            return groq_utils.chat_with_search(client, model, messages=messages)
+        except Exception as exc:
+            last_error = exc
+            print(f"=== MODEL FAILED: {model} ===", repr(exc), flush=True)
+    raise last_error or RuntimeError("No AI model is available")
 
 
 @app.route("/")
@@ -551,7 +745,24 @@ def home():
 
 @app.route("/health")
 def health():
-    return "OK"
+    missing = [
+        name for name, value in (
+            ("TELEGRAM_BOT_TOKEN", TELEGRAM_BOT_TOKEN),
+            ("GROQ_API_KEY", GROQ_API_KEY),
+            ("TELEGRAM_WEBHOOK_SECRET", TELEGRAM_WEBHOOK_SECRET),
+        ) if not value
+    ]
+    payload = {
+        "status": "ok" if not missing else "degraded",
+        "model": MODEL,
+        "fallback_model": MODEL_FALLBACK,
+        "missing_environment": missing,
+        "memory_path": memory.DB_PATH,
+        "memory_external_dir": memory.DATA_DIR != memory.DEFAULT_DATA_DIR,
+        "memory_writable": os.access(memory.DATA_DIR, os.W_OK),
+        "version": os.getenv("RENDER_GIT_COMMIT", "unknown"),
+    }
+    return jsonify(payload), (200 if not missing else 503)
 
 
 # =========================
@@ -559,43 +770,25 @@ def health():
 # =========================
 @app.route(WEBHOOK_PATH, methods=["POST"])
 def telegram_webhook():
-
-    print("=== WEBHOOK HIT ===", flush=True)
-
     try:
+        if not TELEGRAM_WEBHOOK_SECRET:
+            print("=== WEBHOOK ERROR: TELEGRAM_WEBHOOK_SECRET is not set ===", flush=True)
+            return "Webhook secret is not configured", 500
+
+        received_secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+        if not received_secret or not hmac.compare_digest(
+            received_secret, TELEGRAM_WEBHOOK_SECRET
+        ):
+            return "Unauthorized", 403
+
         raw_data = request.get_data().decode("utf-8")
-
-        print("=== TELEGRAM DATA ===", flush=True)
-        print(raw_data, flush=True)
-
         update = telebot.types.Update.de_json(raw_data)
 
-        print("=== UPDATE CREATED ===", flush=True)
-
-        # Диагностический прямой тест /start
-        if update.message and update.message.text == "/start":
-
-            print("=== DIRECT START HANDLER ===", flush=True)
-
-            user_id = update.message.from_user.id
-            memory.clear_history(user_id)
-
-            bot.send_message(
-                update.message.chat.id,
-                "Привет! Я Ёлки-палки — твой ИИ-Бизнес-Стратег.\n\n"
-                "Моя задача — помочь тебе выйти на "
-                "€5 000 чистой прибыли в месяц.\n\n"
-                "Напиши мне любую бизнес-идею."
-            )
-
-            print("=== DIRECT START SENT ===", flush=True)
-
+        update_id = getattr(update, "update_id", None)
+        if not _mark_update_seen(update_id):
             return "OK", 200
 
-        # Все остальные сообщения передаём обычным обработчикам
-        bot.process_new_updates([update])
-
-        print("=== UPDATE PROCESSED ===", flush=True)
+        UPDATE_EXECUTOR.submit(_process_update, update)
 
         return "OK", 200
 
@@ -607,6 +800,39 @@ def telegram_webhook():
         traceback.print_exc()
 
         return "ERROR", 500
+
+
+def _process_update(update):
+    """Process a Telegram update after the webhook has been acknowledged."""
+    user_id = (
+        update.message.from_user.id
+        if update.message and update.message.from_user
+        else None
+    )
+    lock = _get_user_processing_lock(user_id) if user_id is not None else None
+    try:
+        if lock is not None:
+            lock.acquire()
+        if update.message and update.message.text == "/start":
+            user_id = update.message.from_user.id
+            memory.ensure_user(update.message)
+            memory.clear_history(user_id)
+            bot.send_message(
+                update.message.chat.id,
+                "Привет! Я Ёлки-палки — твой ИИ-Бизнес-Стратег.\n\n"
+                "Моя задача — помочь тебе выйти на "
+                "€5 000 чистой прибыли в месяц.\n\n"
+                "Напиши мне любую бизнес-идею."
+            )
+            return
+
+        bot.process_new_updates([update])
+    except Exception:
+        print("=== UPDATE PROCESSING ERROR ===", flush=True)
+        traceback.print_exc()
+    finally:
+        if lock is not None and lock.locked():
+            lock.release()
 
 
 # =========================
@@ -772,6 +998,56 @@ def status_command(message):
     bot.send_message(message.chat.id, memory.progress_line(user_id))
 
 
+@bot.message_handler(func=lambda message: bool(
+    message.text and memory.parse_natural_memory_intent(message.text)
+))
+def remembered_memory_command(message):
+    """Handle simple durable-memory requests without the LLM."""
+    user_id = message.from_user.id
+    memory.ensure_user(message)
+    intent = memory.parse_natural_memory_intent(message.text)
+    if not intent:
+        return
+
+    action, value = intent
+    if action == "set_budget":
+        if value <= 0:
+            bot.send_message(message.chat.id, "Бюджет должен быть больше нуля.")
+            return
+        memory.set_budget(user_id, value)
+        bot.send_message(message.chat.id, f"✅ Бюджет сохранён: €{value:,}.")
+        return
+
+    if action == "get_budget":
+        user = memory.get_user(user_id)
+        budget = (user or {}).get("budget_euro")
+        bot.send_message(
+            message.chat.id,
+            f"💰 Твой сохранённый бюджет: €{budget:,}."
+            if budget
+            else "💰 Бюджет пока не сохранён. Напиши: «запомни мой бюджет 500 евро».",
+        )
+        return
+
+    if action == "set_goal":
+        if value <= 0:
+            bot.send_message(message.chat.id, "Цель должна быть больше нуля.")
+            return
+        memory.set_goal(user_id, value)
+        bot.send_message(message.chat.id, f"✅ Цель сохранена: €{value:,} чистыми/мес.")
+        return
+
+    if action == "get_goal":
+        user = memory.get_user(user_id)
+        goal = (user or {}).get("goal_euro")
+        bot.send_message(
+            message.chat.id,
+            f"🎯 Твоя сохранённая цель: €{goal:,} чистыми/мес."
+            if goal
+            else "🎯 Цель пока не сохранена. Напиши: «запомни цель 5000».",
+        )
+
+
 @bot.message_handler(commands=["calc"])
 def calc_command(message):
 
@@ -809,6 +1085,9 @@ def calc_command(message):
         fee=parsed.get("fee", 0),
         shipping=parsed.get("shipping", 0),
         goal=goal,
+        advertising=parsed.get("advertising", 0),
+        tax=parsed.get("tax", 0),
+        hours=parsed.get("hours", 0),
     )
 
     if not result:
@@ -929,8 +1208,50 @@ def handle_message(message):
     if not user_text:
         return
 
-    print("=== USER MESSAGE ===", flush=True)
-    print(user_text, flush=True)
+    print(f"=== USER MESSAGE from {user_id} ===", flush=True)
+
+    # Generic messages can arrive before /start; create the durable profile
+    # row before any memory write.
+    memory.ensure_user(message)
+
+    # Deterministic memory intents must never be delegated to the LLM.
+    # This fallback also protects us if handler registration changes.
+    intent = memory.parse_natural_memory_intent(user_text)
+    if intent:
+        action, value = intent
+        user = memory.get_user(user_id)
+        if action == "set_budget":
+            if value <= 0:
+                bot.send_message(message.chat.id, "Бюджет должен быть больше нуля.")
+            else:
+                memory.set_budget(user_id, value)
+                bot.send_message(message.chat.id, f"✅ Бюджет сохранён: €{value:,}.")
+            return
+        if action == "get_budget":
+            budget = (user or {}).get("budget_euro")
+            bot.send_message(
+                message.chat.id,
+                f"💰 Твой сохранённый бюджет: €{budget:,}."
+                if budget
+                else "💰 Бюджет пока не сохранён. Напиши: «запомни мой бюджет 500 евро».",
+            )
+            return
+        if action == "set_goal":
+            if value <= 0:
+                bot.send_message(message.chat.id, "Цель должна быть больше нуля.")
+            else:
+                memory.set_goal(user_id, value)
+                bot.send_message(message.chat.id, f"✅ Цель сохранена: €{value:,} чистыми/мес.")
+            return
+        if action == "get_goal":
+            goal = (user or {}).get("goal_euro")
+            bot.send_message(
+                message.chat.id,
+                f"🎯 Твоя сохранённая цель: €{goal:,} чистыми/мес."
+                if goal
+                else "🎯 Цель пока не сохранена. Напиши: «запомни цель 5000».",
+            )
+            return
 
     memory.append_message(user_id, "user", user_text)
 
@@ -942,13 +1263,18 @@ def handle_message(message):
 
     history = memory.get_history(user_id, MAX_HISTORY)
 
+    # Replace only supported placeholders. str.format() would fail if the
+    # prompt contains ordinary braces in examples or formulas.
+    system_prompt = (
+        SYSTEM_PROMPT
+        .replace("{profile}", memory.profile_blurb(user_id))
+        .replace("{context}", context)
+    )
+
     messages = [
         {
             "role": "system",
-            "content": SYSTEM_PROMPT.format(
-                profile=memory.profile_blurb(user_id),
-                context=context,
-            )
+            "content": system_prompt,
         }
     ]
 
@@ -961,11 +1287,9 @@ def handle_message(message):
             flush=True
         )
 
-        answer = groq_utils.chat_with_search(
-            client,
-            MODEL,
-            messages=messages,
-        )
+        answer = generate_business_answer(messages)
+
+        answer = audit_business_answer(user_text, answer)
 
         print(
             "=== GROQ RESPONSE RECEIVED ===",
@@ -979,8 +1303,9 @@ def handle_message(message):
                 "Попробуй ещё раз."
             )
 
-        print("=== ANSWER ===", flush=True)
-        print(answer, flush=True)
+        answer = clean_telegram_text(answer)
+
+        print(f"=== ANSWER READY for {user_id} ({len(answer)} chars) ===", flush=True)
 
         memory.append_message(user_id, "assistant", answer)
         analysis_id = memory.maybe_save_analysis(user_id, user_text, answer)
@@ -1029,15 +1354,33 @@ def handle_message(message):
 
         bot.send_message(
             message.chat.id,
-            "ИИ-сервис временно недоступен "
-            "(превышен дневной лимит запросов).\n\n"
-            "Попробуй ещё раз через 15–30 минут."
+            "Не удалось обработать запрос из-за временной технической ошибки.\n\n"
+            "Попробуй ещё раз через несколько секунд."
         )
 
 
 # =========================
 # START SERVER
 # =========================
+
+def configure_webhook():
+    """Register Telegram webhook for both direct and WSGI startup."""
+    if not TELEGRAM_WEBHOOK_SECRET:
+        raise RuntimeError(
+            "TELEGRAM_WEBHOOK_SECRET is required for a secure webhook"
+        )
+    return bot.set_webhook(
+        url=WEBHOOK_URL,
+        secret_token=TELEGRAM_WEBHOOK_SECRET,
+    )
+
+
+try:
+    print("Webhook set:", configure_webhook(), flush=True)
+except Exception as e:
+    print("Webhook setup error:", repr(e), flush=True)
+    traceback.print_exc()
+
 
 if __name__ == "__main__":
 
@@ -1061,28 +1404,6 @@ if __name__ == "__main__":
         "===================================",
         flush=True
     )
-
-    try:
-
-        result = bot.set_webhook(
-            url=WEBHOOK_URL
-        )
-
-        print(
-            "Webhook set:",
-            result,
-            flush=True
-        )
-
-    except Exception as e:
-
-        print(
-            "Webhook setup error:",
-            repr(e),
-            flush=True
-        )
-
-        traceback.print_exc()
 
     port = int(
         os.getenv(

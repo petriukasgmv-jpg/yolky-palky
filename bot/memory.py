@@ -3,7 +3,19 @@ import re
 import sqlite3
 import time
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "userstate.db")
+DEFAULT_DATA_DIR = os.path.dirname(__file__)
+configured_data_dir = os.getenv("BOT_DATA_DIR", "").strip()
+render_data_dir = "/var/data"
+
+if configured_data_dir:
+    DATA_DIR = configured_data_dir
+elif os.path.isdir(render_data_dir) and os.access(render_data_dir, os.W_OK):
+    DATA_DIR = render_data_dir
+else:
+    DATA_DIR = DEFAULT_DATA_DIR
+
+os.makedirs(DATA_DIR, exist_ok=True)
+DB_PATH = os.path.join(DATA_DIR, "userstate.db")
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -135,6 +147,37 @@ def set_skills(user_id, skills):
 
 def set_about(user_id, about):
     _update(user_id, about=about)
+
+
+def parse_natural_memory_intent(text):
+    """Parse simple memory requests without delegating them to the LLM.
+
+    Returns (action, value), where action is one of:
+    get_budget, set_budget, get_goal, set_goal.
+    """
+    if not isinstance(text, str):
+        return None
+    normalized = re.sub(r"\s+", " ", text.lower()).strip()
+    if not normalized:
+        return None
+
+    save = any(word in normalized for word in ("запомни", "сохрани", "записать"))
+    ask = any(word in normalized for word in ("какой", "сколько", "что за", "узнать"))
+    number = re.search(r"(?<!\d)(\d[\d ]*)(?:[.,]\d+)?", normalized)
+
+    if "бюджет" in normalized:
+        if save and number:
+            return ("set_budget", int(number.group(1).replace(" ", "")))
+        if ask or "мой бюджет" in normalized or "у меня бюджет" in normalized:
+            return ("get_budget", None)
+
+    if "цель" in normalized:
+        if save and number:
+            return ("set_goal", int(number.group(1).replace(" ", "")))
+        if ask or "моя цель" in normalized or "у меня цель" in normalized:
+            return ("get_goal", None)
+
+    return None
 
 
 _FIELD_KEYS = (
