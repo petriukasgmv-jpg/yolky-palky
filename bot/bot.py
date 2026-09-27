@@ -11,7 +11,7 @@ from flask import Flask, jsonify, request
 from groq import Groq
 import telebot
 
-import groq_utils
+from . import groq_utils
 import memory
 import moltbook
 import reminders
