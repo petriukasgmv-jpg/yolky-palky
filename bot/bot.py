@@ -750,7 +750,7 @@ def health():
         "fallback_model": MODEL_FALLBACK,
         "missing_environment": missing,
         "memory_path": memory.DB_PATH,
-        "memory_external_dir": bool(os.getenv("BOT_DATA_DIR", "").strip()),
+        "memory_external_dir": memory.DATA_DIR != memory.DEFAULT_DATA_DIR,
     }
     return jsonify(payload), (200 if not missing else 503)
 
