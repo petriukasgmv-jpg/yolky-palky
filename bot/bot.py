@@ -614,6 +614,50 @@ def clean_telegram_text(text):
     return re.sub(r"\n{3,}", "\n\n", "\n".join(cleaned_lines)).strip()
 
 
+ANSWER_AUDIT_ENABLED = os.getenv("ANSWER_AUDIT_ENABLED", "1") == "1"
+
+
+def audit_business_answer(user_text, answer):
+    """Run a final factual/arithmetic audit before sending business advice."""
+    if not ANSWER_AUDIT_ENABLED or not answer or len(answer) > 14000:
+        return answer
+    try:
+        completion = client.chat.completions.create(
+            model=MODEL,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Ты — финальный аудитор бизнес-ответов. Верни только "
+                        "исправленный готовый ответ на русском. Пересчитай все "
+                        "суммы, расходы, налоги, VAT, CPC/CPL/CPA и часы. "
+                        "Если страна регистрации или налоговая форма не указаны, "
+                        "не угадывай страну и ставку: назови налог допущением и "
+                        "задай один вопрос. Не складывай VAT с налогом на прибыль. "
+                        "Не используй ссылки вида [1†L...] или 【...】 и не выдумывай "
+                        "источники. Если исходный ответ в целом верен, сохрани его "
+                        "содержание, исправив только ошибки."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        "Запрос пользователя:\n" + user_text[:5000]
+                        + "\n\nОтвет для проверки:\n" + answer[:14000]
+                    ),
+                },
+            ],
+            reasoning_effort="low",
+            include_reasoning=False,
+            max_completion_tokens=2500,
+        )
+        audited = (completion.choices[0].message.content or "").strip()
+        return audited or answer
+    except Exception:
+        traceback.print_exc()
+        return answer
+
+
 # =========================
 # FLASK
 # =========================
@@ -1054,6 +1098,8 @@ def handle_message(message):
             MODEL,
             messages=messages,
         )
+
+        answer = audit_business_answer(user_text, answer)
 
         print(
             "=== GROQ RESPONSE RECEIVED ===",
