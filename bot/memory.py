@@ -149,6 +149,37 @@ def set_about(user_id, about):
     _update(user_id, about=about)
 
 
+def parse_natural_memory_intent(text):
+    """Parse simple memory requests without delegating them to the LLM.
+
+    Returns (action, value), where action is one of:
+    get_budget, set_budget, get_goal, set_goal.
+    """
+    if not isinstance(text, str):
+        return None
+    normalized = re.sub(r"\\s+", " ", text.lower()).strip()
+    if not normalized:
+        return None
+
+    save = any(word in normalized for word in ("запомни", "сохрани", "записать"))
+    ask = any(word in normalized for word in ("какой", "сколько", "что за", "узнать"))
+    number = re.search(r"(?<!\\d)(\\d[\\d ]*)(?:[.,]\\d+)?", normalized)
+
+    if "бюджет" in normalized:
+        if save and number:
+            return ("set_budget", int(number.group(1).replace(" ", "")))
+        if ask or "мой бюджет" in normalized or "у меня бюджет" in normalized:
+            return ("get_budget", None)
+
+    if "цель" in normalized:
+        if save and number:
+            return ("set_goal", int(number.group(1).replace(" ", "")))
+        if ask or "моя цель" in normalized or "у меня цель" in normalized:
+            return ("get_goal", None)
+
+    return None
+
+
 _FIELD_KEYS = (
     ("навыки", "skills"),
     ("скилы", "skills"),
