@@ -8,7 +8,7 @@ from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 
 from dotenv import load_dotenv
-from flask import Flask, request
+from flask import Flask, jsonify, request
 from groq import Groq
 import telebot
 from telebot import types
@@ -622,9 +622,7 @@ def audit_business_answer(user_text, answer):
     if not ANSWER_AUDIT_ENABLED or not answer or len(answer) > 14000:
         return answer
     try:
-        completion = client.chat.completions.create(
-            model=MODEL,
-            messages=[
+        audit_messages = [
                 {
                     "role": "system",
                     "content": (
@@ -652,11 +650,22 @@ def audit_business_answer(user_text, answer):
                         + "\n\nОтвет для проверки:\n" + answer[:14000]
                     ),
                 },
-            ],
-            reasoning_effort="low",
-            include_reasoning=False,
-            max_completion_tokens=2500,
-        )
+        ]
+        completion = None
+        for audit_model in dict.fromkeys((MODEL_FALLBACK, MODEL)):
+            try:
+                completion = client.chat.completions.create(
+                    model=audit_model,
+                    messages=audit_messages,
+                    reasoning_effort="low",
+                    include_reasoning=False,
+                    max_completion_tokens=2500,
+                )
+                break
+            except Exception:
+                traceback.print_exc()
+        if completion is None:
+            return answer
         audited = (completion.choices[0].message.content or "").strip()
         return audited or answer
     except Exception:
@@ -671,6 +680,18 @@ def audit_business_answer(user_text, answer):
 app = Flask(__name__)
 
 
+def generate_business_answer(messages):
+    """Use the primary model and fall back automatically if quota/model fails."""
+    last_error = None
+    for model in dict.fromkeys((MODEL, MODEL_FALLBACK)):
+        try:
+            return groq_utils.chat_with_search(client, model, messages=messages)
+        except Exception as exc:
+            last_error = exc
+            print(f"=== MODEL FAILED: {model} ===", repr(exc), flush=True)
+    raise last_error or RuntimeError("No AI model is available")
+
+
 @app.route("/")
 def home():
     return "Yolky Palky AI Business Strategist is running."
@@ -678,7 +699,20 @@ def home():
 
 @app.route("/health")
 def health():
-    return "OK"
+    missing = [
+        name for name, value in (
+            ("TELEGRAM_BOT_TOKEN", TELEGRAM_BOT_TOKEN),
+            ("GROQ_API_KEY", GROQ_API_KEY),
+            ("TELEGRAM_WEBHOOK_SECRET", TELEGRAM_WEBHOOK_SECRET),
+        ) if not value
+    ]
+    payload = {
+        "status": "ok" if not missing else "degraded",
+        "model": MODEL,
+        "fallback_model": MODEL_FALLBACK,
+        "missing_environment": missing,
+    }
+    return jsonify(payload), (200 if not missing else 503)
 
 
 # =========================
@@ -1099,11 +1133,7 @@ def handle_message(message):
             flush=True
         )
 
-        answer = groq_utils.chat_with_search(
-            client,
-            MODEL,
-            messages=messages,
-        )
+        answer = generate_business_answer(messages)
 
         answer = audit_business_answer(user_text, answer)
 
