@@ -18,6 +18,9 @@ os.makedirs(DATA_DIR, exist_ok=True)
 DB_PATH = os.path.join(DATA_DIR, "userstate.db")
 
 _SCHEMA = """
+PRAGMA journal_mode=WAL;
+PRAGMA busy_timeout=10000;
+
 CREATE TABLE IF NOT EXISTS users (
     user_id      INTEGER PRIMARY KEY,
     chat_id      INTEGER,
@@ -40,6 +43,11 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 
 CREATE INDEX IF NOT EXISTS idx_messages_user ON messages(user_id, created_at);
+
+CREATE TABLE IF NOT EXISTS processed_updates (
+    update_id  INTEGER PRIMARY KEY,
+    created_at INTEGER NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS analyses (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -76,45 +84,63 @@ CREATE INDEX IF NOT EXISTS idx_reflections_user ON reflections(user_id, created_
 
 
 def _conn():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=15.0, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.executescript(_SCHEMA)
     return conn
 
 
+def is_update_processed(update_id: int) -> bool:
+    if update_id is None:
+        return False
+    conn = _conn()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT 1 FROM processed_updates WHERE update_id = ?", (update_id,))
+        if cur.fetchone():
+            return True
+        cur.execute(
+            "INSERT INTO processed_updates (update_id, created_at) VALUES (?, ?)",
+            (update_id, int(time.time()))
+        )
+        cur.execute("DELETE FROM processed_updates WHERE created_at < ?", (int(time.time()) - 86400,))
+        conn.commit()
+        return False
+    except sqlite3.IntegrityError:
+        return True
+    finally:
+        conn.close()
+
+
 def ensure_user(message):
     user = message.from_user
     conn = _conn()
-    cur = conn.cursor()
-    cur.execute(
-        "SELECT user_id FROM users WHERE user_id = ?",
-        (user.id,),
-    )
-    if cur.fetchone() is None:
-        cur.execute(
-            "INSERT INTO users "
-            "(user_id, chat_id, first_name, username, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (user.id, message.chat.id, user.first_name, user.username,
-             int(time.time()), int(time.time())),
-        )
-    else:
-        cur.execute(
-            "UPDATE users SET chat_id = ?, updated_at = ? WHERE user_id = ?",
-            (message.chat.id, int(time.time()), user.id),
-        )
-    conn.commit()
-    conn.close()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT user_id FROM users WHERE user_id = ?", (user.id,))
+        if cur.fetchone() is None:
+            cur.execute(
+                "INSERT INTO users (user_id, chat_id, first_name, username, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (user.id, message.chat.id, user.first_name, user.username, int(time.time()), int(time.time())),
+            )
+        else:
+            cur.execute(
+                "UPDATE users SET chat_id = ?, updated_at = ? WHERE user_id = ?",
+                (message.chat.id, int(time.time()), user.id),
+            )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def get_user(user_id):
     conn = _conn()
-    row = conn.execute(
-        "SELECT * FROM users WHERE user_id = ?",
-        (user_id,),
-    ).fetchone()
-    conn.close()
-    return dict(row) if row else None
+    try:
+        row = conn.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
 
 
 def _update(user_id, **fields):
@@ -124,9 +150,11 @@ def _update(user_id, **fields):
     cols = ", ".join(f"{k} = ?" for k in fields)
     vals = list(fields.values()) + [user_id]
     conn = _conn()
-    conn.execute(f"UPDATE users SET {cols} WHERE user_id = ?", vals)
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute(f"UPDATE users SET {cols} WHERE user_id = ?", vals)
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def set_goal(user_id, amount):
@@ -150,11 +178,6 @@ def set_about(user_id, about):
 
 
 def parse_natural_memory_intent(text):
-    """Parse simple memory requests without delegating them to the LLM.
-
-    Returns (action, value), where action is one of:
-    get_budget, set_budget, get_goal, set_goal.
-    """
     if not isinstance(text, str):
         return None
     normalized = re.sub(r"\s+", " ", text.lower()).strip()
@@ -193,11 +216,6 @@ _FIELD_KEYS = (
 
 
 def parse_profile(text):
-    """Parse /profile free text into a dict of recognized fields.
-
-    Profile fields are separated by ';' and given as ``ключ: значение``.
-    Returns a dict with any of: skills, city, budget_euro, goal_euro.
-    """
     out = {}
     for segment in text.split(";"):
         segment = segment.strip()
@@ -219,7 +237,6 @@ def parse_profile(text):
 
 
 def profile_blurb(user_id):
-    """A short text about the user, injected into the system prompt."""
     u = get_user(user_id)
     if not u:
         return ""
@@ -245,14 +262,10 @@ def format_profile(user_id):
         return "Профиль не настроен."
     lines = []
     goal = u.get("goal_euro")
-    lines.append(f"🎯 Цель: €{goal:,} чистыми/мес" if goal
-                 else "🎯 Цель: не задана")
-    lines.append(f"🧰 Навыки: {u['skills']}" if u.get("skills")
-                 else "🧰 Навыки: не указаны")
-    lines.append(f"📍 Город: {u['city']}" if u.get("city")
-                 else "📍 Город: не указан")
-    lines.append(f"💰 Бюджет: €{u['budget_euro']:,}" if u.get("budget_euro")
-                 else "💰 Бюджет: не указан")
+    lines.append(f"🎯 Цель: €{goal:,} чистыми/мес" if goal else "🎯 Цель: не задана")
+    lines.append(f"🧰 Навыки: {u['skills']}" if u.get("skills") else "🧰 Навыки: не указаны")
+    lines.append(f"📍 Город: {u['city']}" if u.get("city") else "📍 Город: не указан")
+    lines.append(f"💰 Бюджет: €{u['budget_euro']:,}" if u.get("budget_euro") else "💰 Бюджет: не указан")
     if u.get("about"):
         lines.append(f"📝 О себе: {u['about']}")
     return "Профиль:\n" + "\n".join(lines)
@@ -262,49 +275,46 @@ MAX_STORED_MESSAGES = 100
 
 
 def append_message(user_id, role, content):
-    """Persist one message. Old messages are pruned to keep the DB bounded."""
     conn = _conn()
-    conn.execute(
-        "INSERT INTO messages (user_id, role, content, created_at) "
-        "VALUES (?, ?, ?, ?)",
-        (user_id, role, content, int(time.time())),
-    )
-    conn.execute(
-        "DELETE FROM messages WHERE user_id = ? AND rowid NOT IN "
-        "(SELECT rowid FROM messages WHERE user_id = ? "
-        " ORDER BY rowid DESC LIMIT ?)",
-        (user_id, user_id, MAX_STORED_MESSAGES),
-    )
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute(
+            "INSERT INTO messages (user_id, role, content, created_at) VALUES (?, ?, ?, ?)",
+            (user_id, role, content, int(time.time())),
+        )
+        conn.execute(
+            "DELETE FROM messages WHERE user_id = ? AND rowid NOT IN "
+            "(SELECT rowid FROM messages WHERE user_id = ? ORDER BY rowid DESC LIMIT ?)",
+            (user_id, user_id, MAX_STORED_MESSAGES),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def get_history(user_id, limit=10):
-    """Last N messages for a user, oldest first (for the LLM context)."""
     conn = _conn()
-    rows = conn.execute(
-        "SELECT role, content FROM messages "
-        "WHERE user_id = ? ORDER BY rowid ASC",
-        (user_id,),
-    ).fetchall()
-    conn.close()
-    history = [{"role": r["role"], "content": r["content"]} for r in rows]
-    return history[-limit:]
+    try:
+        rows = conn.execute(
+            "SELECT role, content FROM messages WHERE user_id = ? ORDER BY rowid ASC",
+            (user_id,),
+        ).fetchall()
+        history = [{"role": r["role"], "content": r["content"]} for r in rows]
+        return history[-limit:]
+    finally:
+        conn.close()
 
 
 def clear_history(user_id):
     conn = _conn()
-    conn.execute("DELETE FROM messages WHERE user_id = ?", (user_id,))
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute("DELETE FROM messages WHERE user_id = ?", (user_id,))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 MAX_STORED_ANALYSES = 200
-
-_ANALYSIS_MARKERS = (
-    "вердикт", "вывод", "окупаемость", "маржа", "прибыль",
-    "ежемесяч", "риски", "план", "продаж",
-)
+_ANALYSIS_MARKERS = ("вердикт", "вывод", "окупаемость", "маржа", "прибыль", "ежемесяч", "риски", "план", "продаж")
 _STOPWORDS = {
     "и", "в", "во", "не", "что", "чтобы", "как", "для", "на", "с", "со",
     "по", "это", "этот", "за", "из", "от", "ли", "а", "но", "то", "если",
@@ -320,7 +330,6 @@ def _is_analysis(answer):
 
 
 def _extract_verdict(answer):
-    """Try to grab the verdict line from an analysis answer."""
     low = answer.lower()
     for marker in ("мой вывод", "вердикт", "рекомендация", "вывод"):
         idx = low.find(marker)
@@ -333,78 +342,66 @@ def _extract_verdict(answer):
 
 
 def maybe_save_analysis(user_id, idea, answer):
-    """Store a business analysis so it can be reused in future answers.
-
-    Only saves when the assistant's reply looks like a real analysis
-    (contains verdict / margin / profit markers), keeping the knowledge
-    base clean of chit-chat. Returns the analysis id (for feedback) or
-    None when nothing was saved.
-    """
     if not idea or not answer or not _is_analysis(answer):
         return None
     conn = _conn()
-    cur = conn.cursor()
-    cur.execute(
-        "INSERT INTO analyses "
-        "(user_id, idea, summary, detail, verdict, created_at) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
-        (
-            user_id,
-            idea[:300],
-            idea[:120],
-            answer[:4000],
-            _extract_verdict(answer),
-            int(time.time()),
-        ),
-    )
-    cur.execute(
-        "DELETE FROM analyses WHERE user_id = ? AND id NOT IN "
-        "(SELECT id FROM analyses WHERE user_id = ? "
-        " ORDER BY created_at DESC LIMIT ?)",
-        (user_id, user_id, MAX_STORED_ANALYSES),
-    )
-    conn.commit()
-    analysis_id = cur.lastrowid
-    conn.close()
-    return analysis_id
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO analyses (user_id, idea, summary, detail, verdict, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                user_id,
+                idea[:300],
+                idea[:120],
+                answer[:4000],
+                _extract_verdict(answer),
+                int(time.time()),
+            ),
+        )
+        cur.execute(
+            "DELETE FROM analyses WHERE user_id = ? AND id NOT IN "
+            "(SELECT id FROM analyses WHERE user_id = ? ORDER BY created_at DESC LIMIT ?)",
+            (user_id, user_id, MAX_STORED_ANALYSES),
+        )
+        conn.commit()
+        return cur.lastrowid
+    finally:
+        conn.close()
 
 
 def rate_analysis(user_id, analysis_id, rating):
-    """Record user feedback (1 = worked, -1 = didn't, 0 = not tried)."""
     conn = _conn()
-    conn.execute(
-        "DELETE FROM feedback WHERE user_id = ? AND analysis_id = ?",
-        (user_id, analysis_id),
-    )
-    conn.execute(
-        "INSERT INTO feedback (user_id, analysis_id, rating, created_at) "
-        "VALUES (?, ?, ?, ?)",
-        (user_id, analysis_id, int(rating), int(time.time())),
-    )
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute("DELETE FROM feedback WHERE user_id = ? AND analysis_id = ?", (user_id, analysis_id))
+        conn.execute(
+            "INSERT INTO feedback (user_id, analysis_id, rating, created_at) VALUES (?, ?, ?, ?)",
+            (user_id, analysis_id, int(rating), int(time.time())),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def feedback_lessons(user_id):
-    """Summarize past feedback into a context block for the prompt."""
     conn = _conn()
-    rows = conn.execute(
-        "SELECT a.summary, f.rating FROM feedback f "
-        "JOIN analyses a ON a.id = f.analysis_id "
-        "WHERE f.user_id = ? AND f.rating IN (1, -1) "
-        "ORDER BY f.created_at DESC LIMIT 12",
-        (user_id,),
-    ).fetchall()
-    conn.close()
-    if not rows:
-        return ""
-    parts = []
-    for r in rows:
-        label = "СРАБОТАЛО (усиливай такие советы)" if r["rating"] == 1 \
-            else "НЕ СРАБОТАЛО (предлагай другое в таких случаях)"
-        parts.append(f"• {r['summary'][:80]} — {label}")
-    return ("ОТЗЫВЫ О ТВОИХ СОВЕТАХ (учти в будущих ответах):\n"
-            + "\n".join(parts) + "\n")
+    try:
+        rows = conn.execute(
+            "SELECT a.summary, f.rating FROM feedback f "
+            "JOIN analyses a ON a.id = f.analysis_id "
+            "WHERE f.user_id = ? AND f.rating IN (1, -1) "
+            "ORDER BY f.created_at DESC LIMIT 12",
+            (user_id,),
+        ).fetchall()
+        if not rows:
+            return ""
+        parts = []
+        for r in rows:
+            label = "СРАБОТАЛО (усиливай такие советы)" if r["rating"] == 1 else "НЕ СРАБОТАЛО (предлагай другое)"
+            parts.append(f"• {r['summary'][:80]} — {label}")
+        return "ОТЗЫВЫ О ТВОИХ СОВЕТАХ (учти в будущих ответах):\n" + "\n".join(parts) + "\n"
+    finally:
+        conn.close()
 
 
 def _keywords(text):
@@ -417,42 +414,37 @@ def _keywords(text):
 
 
 def remember_ideas(user_id, query, limit=3):
-    """Find past analyses relevant to the current query.
-
-    Matches on morphological stems (first 4 letters) of query keywords
-    against stored idea/summary text, newest first. Falls back to the
-    most recent analyses when nothing relevant is found.
-    """
     conn = _conn()
-    keywords = _keywords(query)
-    rows = []
-    if keywords:
-        stems = {kw[:4] for kw in keywords if len(kw) >= 4}
-        if stems:
-            conds = []
-            params = [user_id]
-            for stem in stems:
-                conds.append("(idea LIKE ? OR summary LIKE ?)")
-                params.extend([f"%{stem}%", f"%{stem}%"])
-            params.append(limit)
+    try:
+        keywords = _keywords(query)
+        rows = []
+        if keywords:
+            stems = {kw[:4] for kw in keywords if len(kw) >= 4}
+            if stems:
+                conds = []
+                params = [user_id]
+                for stem in stems:
+                    conds.append("(idea LIKE ? OR summary LIKE ?)")
+                    params.extend([f"%{stem}%", f"%{stem}%"])
+                params.append(limit)
+                rows = conn.execute(
+                    "SELECT summary, verdict, detail, created_at FROM analyses "
+                    "WHERE user_id = ? AND (" + " OR ".join(conds) + ") "
+                    "ORDER BY created_at DESC LIMIT ?",
+                    params,
+                ).fetchall()
+        if not rows:
             rows = conn.execute(
                 "SELECT summary, verdict, detail, created_at FROM analyses "
-                "WHERE user_id = ? AND (" + " OR ".join(conds) + ") "
-                "ORDER BY created_at DESC LIMIT ?",
-                params,
+                "WHERE user_id = ? ORDER BY created_at DESC LIMIT ?",
+                (user_id, limit),
             ).fetchall()
-    if not rows:
-        rows = conn.execute(
-            "SELECT summary, verdict, detail, created_at FROM analyses "
-            "WHERE user_id = ? ORDER BY created_at DESC LIMIT ?",
-            (user_id, limit),
-        ).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
 
 
 def format_prior_ideas(rows):
-    """Render remembered analyses as extra context for the system prompt."""
     if not rows:
         return ""
     parts = []
@@ -473,58 +465,64 @@ def format_prior_ideas(rows):
 
 
 def messages_since(user_id, since_rowid=None, limit=100):
-    """Messages for a user, oldest first. Returns (list, max_rowid)."""
     conn = _conn()
-    if since_rowid is None:
-        rows = conn.execute(
-            "SELECT rowid, role, content FROM messages "
-            "WHERE user_id = ? ORDER BY rowid DESC LIMIT ?",
-            (user_id, limit),
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            "SELECT rowid, role, content FROM messages "
-            "WHERE user_id = ? AND rowid > ? ORDER BY rowid DESC LIMIT ?",
-            (user_id, since_rowid, limit),
-        ).fetchall()
-    rows = list(reversed(rows))
-    conn.close()
-    if not rows:
-        return [], None
-    msgs = [{"role": r["role"], "content": r["content"]} for r in rows]
-    return msgs, rows[-1]["rowid"]
+    try:
+        if since_rowid is None:
+            rows = conn.execute(
+                "SELECT rowid, role, content FROM messages "
+                "WHERE user_id = ? ORDER BY rowid DESC LIMIT ?",
+                (user_id, limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT rowid, role, content FROM messages "
+                "WHERE user_id = ? AND rowid > ? ORDER BY rowid DESC LIMIT ?",
+                (user_id, since_rowid, limit),
+            ).fetchall()
+        rows = list(reversed(rows))
+        if not rows:
+            return [], None
+        msgs = [{"role": r["role"], "content": r["content"]} for r in rows]
+        return msgs, rows[-1]["rowid"]
+    finally:
+        conn.close()
 
 
 def latest_reflection_rowid(user_id):
     conn = _conn()
-    row = conn.execute(
-        "SELECT MAX(since_rowid) AS m FROM reflections WHERE user_id = ?",
-        (user_id,),
-    ).fetchone()
-    conn.close()
-    return row["m"] if row and row["m"] is not None else 0
+    try:
+        row = conn.execute(
+            "SELECT MAX(since_rowid) AS m FROM reflections WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+        return row["m"] if row and row["m"] is not None else 0
+    finally:
+        conn.close()
 
 
 def save_reflection(user_id, summary, since_rowid):
     conn = _conn()
-    conn.execute(
-        "INSERT INTO reflections (user_id, summary, since_rowid, created_at) "
-        "VALUES (?, ?, ?, ?)",
-        (user_id, summary, since_rowid, int(time.time())),
-    )
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute(
+            "INSERT INTO reflections (user_id, summary, since_rowid, created_at) "
+            "VALUES (?, ?, ?, ?)",
+            (user_id, summary, since_rowid, int(time.time())),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def get_reflections(user_id, limit=5):
     conn = _conn()
-    rows = conn.execute(
-        "SELECT summary, created_at FROM reflections "
-        "WHERE user_id = ? ORDER BY created_at DESC LIMIT ?",
-        (user_id, limit),
-    ).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+    try:
+        rows = conn.execute(
+            "SELECT summary, created_at FROM reflections WHERE user_id = ? ORDER BY created_at DESC LIMIT ?",
+            (user_id, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
 
 
 def format_reflections(rows):
@@ -533,22 +531,22 @@ def format_reflections(rows):
     parts = [f"• {r['summary']}" for r in rows if r.get("summary")]
     if not parts:
         return ""
-    return ("ТВОИ ИТОГИ ИЗ ПРОШЛЫХ ДИАЛОГОВ (рефлексия, используй при ответе):\n"
-            + "\n".join(parts) + "\n")
+    return ("ТВОИ ИТОГИ ИЗ ПРОШЛЫХ ДИАЛОГОВ (рефлексия, используй при ответе):\n" + "\n".join(parts) + "\n")
 
 
 def all_user_ids():
     conn = _conn()
-    rows = conn.execute("SELECT DISTINCT user_id FROM messages").fetchall()
-    conn.close()
-    return [r["user_id"] for r in rows]
+    try:
+        rows = conn.execute("SELECT DISTINCT user_id FROM messages").fetchall()
+        return [r["user_id"] for r in rows]
+    finally:
+        conn.close()
 
 
 def progress_line(user_id):
     u = get_user(user_id)
     if not u or not u.get("goal_euro"):
-        return ("Цель ещё не задана. Стань цель командой, например:\n"
-                "/goal 5000")
+        return "Цель ещё не задана. Установи цель командой, например:\n/goal 5000"
     goal = u["goal_euro"]
     return (
         f"🎯 Цель: €{goal:,} чистой прибыли в месяц.\n"
