@@ -176,3 +176,18 @@ if __name__ == '__main__':
 
     port = int(os.getenv("PORT", "10000"))
     app.run(host="0.0.0.0", port=port)
+import re
+
+def clean_telegram_text(text: str) -> str:
+    # Удаляем строки-разделители таблиц типа |-------|-------|
+    text = re.sub(r'\|[\s\-:]*\|[\s\-:]*\|.*', '', text)
+    # Заменяем символ | на обычный дефис или пробел, чтобы не ломать текст
+    text = text.replace('|', '-')
+    # Заменяем заголовки таблиц ### на нормальный жирный текст
+    text = re.sub(r'###\s*(.*)', r'*\1*', text)
+    return text
+
+# ПРИМЕР ИСПОЛЬЗОВАНИЯ ПРИ ОТПРАВКЕ:
+# raw_response = get_groq_response(...)
+# clean_response = clean_telegram_text(raw_response)
+# bot.send_message(chat_id, clean_response)
