@@ -47,6 +47,32 @@ bot = telebot.TeleBot(
     threaded=False
 )
 
+
+def _repair_mojibake(text):
+    """Repair Cyrillic text accidentally decoded as Windows-1252/Latin-1."""
+    if not isinstance(text, str) or not text:
+        return text
+    if not any(marker in text for marker in ("Р ", "РЎ", "Гђ", "Г‘")):
+        return text
+    for encoding in ("cp1251", "cp1252", "latin1"):
+        try:
+            repaired = text.encode(encoding).decode("utf-8")
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            continue
+        if repaired != text and "пїЅ" not in repaired:
+            return repaired
+    return text
+
+
+_send_message = bot.send_message
+
+
+def _safe_send_message(chat_id, text, *args, **kwargs):
+    return _send_message(chat_id, _repair_mojibake(text), *args, **kwargs)
+
+
+bot.send_message = _safe_send_message
+
 # Acknowledge webhook requests immediately and process updates in the
 # background, so slow AI/search calls do not make Telegram retry updates.
 UPDATE_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="telegram-update")
