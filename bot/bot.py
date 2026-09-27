@@ -991,6 +991,15 @@ def remembered_budget_command(message):
     """Answer budget questions from durable profile memory, without the LLM."""
     user_id = message.from_user.id
     memory.ensure_user(message)
+    normalized = re.sub(r"\s+", " ", message.text.lower()).strip()
+
+    if "запомни" in normalized or "сохрани" in normalized:
+        amount = _parse_amount(normalized)
+        if amount and amount > 0:
+            memory.set_budget(user_id, amount)
+            bot.send_message(message.chat.id, f"✅ Бюджет сохранён: €{amount:,}.")
+            return
+
     user = memory.get_user(user_id)
     budget = (user or {}).get("budget_euro")
     if budget:
