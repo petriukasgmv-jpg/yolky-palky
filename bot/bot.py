@@ -8,13 +8,10 @@ from concurrent.futures import ThreadPoolExecutor
 
 from dotenv import load_dotenv
 from flask import Flask, jsonify, request
-from groq import groq_utils
-import memory
-
 import telebot
 
-from . import groq_utils
 import memory
+from . import groq_utils
 import moltbook
 import reminders
 from prompt import SYSTEM_PROMPT
